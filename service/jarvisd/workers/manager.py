@@ -103,6 +103,7 @@ class WorkerManager:
             os.killpg(proc.pid, signal.SIGTERM)
             self.db.update_task(task_id, status="canceled",
                                 result_summary="canceled by user")
+            self._escalate_kill(proc)
         elif action == "cancel" and t["status"] == "queued":
             self.db.update_task(task_id, status="canceled",
                                 result_summary="canceled before start")
@@ -110,6 +111,24 @@ class WorkerManager:
             return {"ok": False, "error": f"cannot {action} task in state {t['status']}"}
         self._emit(task_id)
         return {"ok": True, "status": self.db.get_task(task_id)["status"]}
+
+    def _escalate_kill(self, proc: subprocess.Popen) -> None:
+        """SIGTERM was sent; guarantee death with SIGKILL if it's ignored."""
+
+        async def _watch():
+            for _ in range(10):
+                if proc.poll() is not None:
+                    return
+                await asyncio.sleep(0.5)
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+        try:
+            asyncio.get_running_loop().create_task(_watch())
+        except RuntimeError:  # no loop (unit test sync path): best-effort immediate check
+            pass
 
     # ------------------------------------------------------------ internals
     async def _run(self, task_id: str) -> None:
@@ -138,7 +157,7 @@ class WorkerManager:
         cmd = [self.hermes_bin, "-p", PROFILE, "-z", prompt, "--yolo",
                "-t", t["toolsets"], "--usage-file", usage_file]
         env = {k: v for k, v in os.environ.items()
-               if not re.search(r"(API_KEY|TOKEN|SECRET)", k)}
+               if not re.search(r"(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", k, re.I)}
         env["HERMES_HOME"] = os.path.expanduser(f"~/.hermes/profiles/{PROFILE}")
 
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

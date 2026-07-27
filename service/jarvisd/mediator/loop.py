@@ -141,6 +141,10 @@ class Mediator:
             break
 
         spoken = spoken.strip()
+        if not spoken and not cancel.is_set():
+            # Rare empty completion (Ollama under load) — never return silence.
+            spoken = "Sorry, I lost my train of thought there. Could you say that again?"
+            on_delta(spoken)
         if spoken:
             self.history.append({"role": "user", "content": user_text})
             self.history.append({"role": "assistant", "content": spoken})

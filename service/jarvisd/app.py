@@ -71,6 +71,7 @@ async def _probe_models(cfg: JarvisConfig) -> dict[str, Any]:
                 name = model.get("name") or model.get("model")
                 if name:
                     resident.add(name)
+                    resident.add(name.removesuffix(":latest"))  # ps reports granite...:latest
     except Exception:
         pass  # health degrades gracefully — models simply report not-resident
     return {

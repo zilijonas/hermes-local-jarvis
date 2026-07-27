@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+faster-whisper
+kokoro-onnx
+soundfile
+webrtcvad-wheels
+httpx
+websockets
+psutil
+pyyaml
+pytest
+pytest-asyncio

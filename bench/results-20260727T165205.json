@@ -1,0 +1,110 @@
+{
+  "base_url": "http://127.0.0.1:9140",
+  "timestamp": "2026-07-27T16:53:17+0300",
+  "ram_before_gb": 4.86,
+  "ram_after_gb": 4.52,
+  "text_turns": [
+    {
+      "turn": 0,
+      "text": "what time is it?",
+      "wall_ms": 8131.3,
+      "reply_chars": 66,
+      "actions": [
+        "quick_action"
+      ]
+    },
+    {
+      "turn": 1,
+      "text": "hello jarvis",
+      "wall_ms": 4174.6,
+      "reply_chars": 40,
+      "actions": []
+    },
+    {
+      "turn": 2,
+      "text": "what's today's date?",
+      "wall_ms": 10117.3,
+      "reply_chars": 60,
+      "actions": [
+        "quick_action"
+      ]
+    },
+    {
+      "turn": 3,
+      "text": "are you doing okay?",
+      "wall_ms": 4099.9,
+      "reply_chars": 124,
+      "actions": []
+    },
+    {
+      "turn": 4,
+      "text": "list what you're working on",
+      "wall_ms": 16393.0,
+      "reply_chars": 198,
+      "actions": [
+        "quick_action"
+      ]
+    },
+    {
+      "turn": 5,
+      "text": "what do you know about this machine?",
+      "wall_ms": 22062.0,
+      "reply_chars": 194,
+      "actions": [
+        "memory_recall"
+      ]
+    }
+  ],
+  "text_wall_ms_stats": {
+    "p50": 8131.314584054053,
+    "p95": 22061.988500063308,
+    "min": 4099.8699580086395,
+    "max": 22061.988500063308,
+    "n": 6
+  },
+  "voice_turns": [
+    {
+      "error": "no close frame received or sent"
+    },
+    {
+      "error": "no close frame received or sent"
+    },
+    {
+      "error": "no close frame received or sent"
+    },
+    {
+      "error": "no close frame received or sent"
+    },
+    {
+      "error": "no close frame received or sent"
+    }
+  ],
+  "voice_stt_ms_stats": {
+    "p50": null,
+    "p95": null,
+    "min": null,
+    "max": null,
+    "n": 0
+  },
+  "voice_mediator_first_token_ms_stats": {
+    "p50": null,
+    "p95": null,
+    "min": null,
+    "max": null,
+    "n": 0
+  },
+  "voice_first_tts_ms_stats": {
+    "p50": null,
+    "p95": null,
+    "min": null,
+    "max": null,
+    "n": 0
+  },
+  "voice_e2e_ms_stats": {
+    "p50": null,
+    "p95": null,
+    "min": null,
+    "max": null,
+    "n": 0
+  }
+}
