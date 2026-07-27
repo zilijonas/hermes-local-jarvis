@@ -1,0 +1,15 @@
+This directory (ui/) is reserved for the real voice frontend source — the
+cinematic canvas, AudioWorklet mic capture, task board, memory/capability
+panels described in docs/SPEC.md and ARCHITECTURE.md (phase 3/7 onward).
+
+Until that build lands, the dashboard plugin ships a hand-authored,
+build-step-free placeholder directly at:
+
+  hermes-plugin/dashboard/dist/index.js
+  hermes-plugin/dashboard/dist/style.css
+
+That placeholder proves the plumbing end to end (manifest discovery ->
+IIFE load -> plugin_api.py proxy -> jarvisd /health) without depending on
+this directory existing yet. When the real ui/ build is added, point its
+output at hermes-plugin/dashboard/dist/ (or update manifest.json's
+entry/css paths) and delete this note.

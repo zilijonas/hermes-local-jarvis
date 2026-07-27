@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.jarvis.jarvisd</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>@REPO@/service/.venv/bin/python</string>
+        <string>-m</string>
+        <string>jarvisd.app</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>@REPO@/service</string>
+
+    <!-- No cloud API keys here — jarvisd talks only to loopback Ollama,
+         local STT/TTS, and the local Obsidian vault (see ARCHITECTURE.md). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HERMES_HOME</key>
+        <string>/Users/agent/.hermes/profiles/jarvis-voice</string>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+    </dict>
+
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+        <string>Background</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/agent/.hermes/profiles/jarvis-voice/logs/jarvisd.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/agent/.hermes/profiles/jarvis-voice/logs/jarvisd.err.log</string>
+</dict>
+</plist>

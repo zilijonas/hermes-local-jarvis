@@ -1,0 +1,540 @@
+/* jarvis-voice dashboard plugin — real UI styles.
+ * Single dark, full-height, professional layout. All colors are CSS custom
+ * properties scoped under .jv-root so the plugin never leaks variables into
+ * the host dashboard's global scope. See ui/README.md for the file map. */
+
+.jv-root {
+  --jv-bg: #0b0b0f;
+  --jv-bg-elevated: #131318;
+  --jv-panel-bg: #15151b;
+  --jv-border: #26262f;
+  --jv-fg: #e5e7eb;
+  --jv-fg-dim: #9ca3af;
+  --jv-fg-faint: #6b7280;
+
+  --jv-accent-cyan: #22d3ee;
+  --jv-accent-purple: #a78bfa;
+  --jv-accent-amber: #fbbf24;
+  --jv-accent-red: #f87171;
+  --jv-accent-green: #34d399;
+
+  --jv-ok: #16a34a;
+  --jv-warn: #d97706;
+  --jv-danger: #dc2626;
+  --jv-info: #38bdf8;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100vh;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--jv-bg);
+  color: var(--jv-fg);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+.jv-root * {
+  box-sizing: border-box;
+}
+
+/* ---------- header ---------- */
+.jv-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--jv-border);
+  flex: none;
+}
+.jv-header-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--jv-fg);
+}
+.jv-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.jv-icon-btn {
+  background: transparent;
+  border: 1px solid var(--jv-border);
+  color: var(--jv-fg-dim);
+  border-radius: 0.5rem;
+  width: 2rem;
+  height: 2rem;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.jv-icon-btn:hover {
+  color: var(--jv-fg);
+  border-color: var(--jv-fg-faint);
+}
+
+/* ---------- badges / chips ---------- */
+.jv-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--jv-border);
+  color: var(--jv-fg-dim);
+}
+.jv-badge-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+.jv-badge--ok {
+  color: var(--jv-ok);
+}
+.jv-badge--info {
+  color: var(--jv-info);
+}
+.jv-badge--warn {
+  color: var(--jv-warn);
+}
+
+.jv-chip {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--jv-border);
+  color: var(--jv-fg-dim);
+  white-space: nowrap;
+}
+.jv-chip--running {
+  color: var(--jv-info);
+  border-color: var(--jv-info);
+}
+.jv-chip--queued {
+  color: var(--jv-fg-dim);
+}
+.jv-chip--paused {
+  color: var(--jv-warn);
+  border-color: var(--jv-warn);
+}
+.jv-chip--done {
+  color: var(--jv-ok);
+  border-color: var(--jv-ok);
+}
+.jv-chip--failed {
+  color: var(--jv-danger);
+  border-color: var(--jv-danger);
+}
+.jv-chip--canceled {
+  color: var(--jv-fg-faint);
+}
+.jv-chip--needs_review {
+  color: var(--jv-accent-amber);
+  border-color: var(--jv-accent-amber);
+}
+
+/* ---------- layout ---------- */
+.jv-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+.jv-stage {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding: 1rem 1.5rem 0.5rem;
+  position: relative;
+}
+.jv-stage-canvas-wrap {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+.jv-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---------- PTT ---------- */
+.jv-ptt-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: -4rem;
+  z-index: 1;
+}
+.jv-ptt-btn {
+  width: 5.5rem;
+  height: 5.5rem;
+  border-radius: 50%;
+  border: 2px solid var(--jv-accent-cyan);
+  background: radial-gradient(circle at 30% 30%, rgba(34, 211, 238, 0.25), rgba(11, 11, 15, 0.9));
+  color: var(--jv-accent-cyan);
+  font-size: 1.6rem;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  transition: transform 80ms ease-out, box-shadow 80ms ease-out, background 80ms ease-out;
+  box-shadow: 0 0 24px rgba(34, 211, 238, 0.15);
+}
+.jv-ptt-btn:active,
+.jv-ptt-btn--active {
+  transform: scale(1.08);
+  background: radial-gradient(circle at 30% 30%, rgba(34, 211, 238, 0.55), rgba(11, 11, 15, 0.9));
+  box-shadow: 0 0 40px rgba(34, 211, 238, 0.45);
+}
+.jv-ptt-label {
+  font-size: 0.85rem;
+  color: var(--jv-fg-dim);
+  min-height: 1.2em;
+}
+.jv-mode-toggle {
+  background: transparent;
+  border: 1px solid var(--jv-border);
+  color: var(--jv-fg-faint);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.jv-mode-toggle--active {
+  color: var(--jv-accent-purple);
+  border-color: var(--jv-accent-purple);
+}
+
+/* ---------- transcript / mediator ---------- */
+.jv-transcript {
+  min-height: 1.6em;
+  margin-top: 0.75rem;
+  font-size: 1rem;
+  text-align: center;
+  max-width: 42rem;
+}
+.jv-transcript-partial {
+  color: var(--jv-fg-faint);
+  font-style: italic;
+}
+.jv-transcript-final {
+  color: var(--jv-fg);
+}
+.jv-mediator-text {
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  color: var(--jv-fg-dim);
+  text-align: center;
+  max-width: 42rem;
+  min-height: 1.4em;
+  white-space: pre-wrap;
+}
+
+/* ---------- right column ---------- */
+.jv-rightcol {
+  flex: none;
+  width: 21rem;
+  max-width: 32vw;
+  border-left: 1px solid var(--jv-border);
+  background: var(--jv-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  overflow-y: auto;
+  position: relative;
+  transition: width 220ms ease;
+}
+.jv-rightcol--collapsed {
+  width: 2.25rem;
+  max-width: 2.25rem;
+  padding: 0.75rem 0.25rem;
+  overflow: visible;
+}
+.jv-collapse-btn {
+  position: sticky;
+  top: 0;
+  align-self: flex-end;
+  background: transparent;
+  border: 1px solid var(--jv-border);
+  color: var(--jv-fg-dim);
+  border-radius: 0.4rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.jv-panel {
+  background: var(--jv-panel-bg);
+  border: 1px solid var(--jv-border);
+  border-radius: 0.75rem;
+  padding: 0.65rem 0.75rem;
+}
+.jv-panel-title {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--jv-fg-faint);
+  margin-bottom: 0.5rem;
+}
+.jv-empty {
+  font-size: 0.8rem;
+  color: var(--jv-fg-faint);
+  padding: 0.25rem 0;
+}
+
+/* ---------- timeline ---------- */
+.jv-timeline {
+  max-height: 16rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.jv-timeline-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 0.15rem 0;
+}
+.jv-timeline-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+}
+.jv-clickable {
+  cursor: pointer;
+}
+.jv-timeline-ts {
+  color: var(--jv-fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.jv-timeline-icon {
+  color: var(--jv-accent-cyan);
+  width: 1.1em;
+  text-align: center;
+}
+.jv-timeline-label {
+  color: var(--jv-fg-dim);
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jv-timeline-chevron {
+  color: var(--jv-fg-faint);
+}
+.jv-timeline-details {
+  margin: 0.25rem 0 0.25rem 1.5rem;
+  padding: 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--jv-fg-dim);
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+/* ---------- tasks ---------- */
+.jv-task-row {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.jv-task-main {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+.jv-task-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--jv-fg);
+}
+.jv-task-kind {
+  color: var(--jv-fg-faint);
+  font-size: 0.7rem;
+}
+.jv-task-note {
+  font-size: 0.72rem;
+  color: var(--jv-fg-faint);
+  margin-top: 0.15rem;
+}
+.jv-task-controls {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+
+/* ---------- memory ---------- */
+.jv-memory-row {
+  padding: 0.3rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.jv-memory-title {
+  font-size: 0.8rem;
+  color: var(--jv-fg);
+}
+.jv-memory-path {
+  font-size: 0.7rem;
+  color: var(--jv-fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- health / latency ---------- */
+.jv-health-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+.jv-latency-row {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--jv-fg-dim);
+  padding: 0.1rem 0;
+}
+.jv-latency-stage {
+  flex: 1 1 auto;
+  color: var(--jv-fg-faint);
+}
+
+/* ---------- text input ---------- */
+.jv-textbar {
+  flex: none;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-top: 1px solid var(--jv-border);
+  background: var(--jv-bg-elevated);
+}
+.jv-textbar-input {
+  flex: 1 1 auto;
+  background: var(--jv-bg);
+  border: 1px solid var(--jv-border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  color: var(--jv-fg);
+  font-size: 0.9rem;
+}
+.jv-textbar-input:focus {
+  outline: none;
+  border-color: var(--jv-accent-cyan);
+}
+
+/* ---------- buttons ---------- */
+.jv-btn {
+  background: var(--jv-bg-elevated);
+  border: 1px solid var(--jv-border);
+  color: var(--jv-fg);
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.jv-btn:hover {
+  border-color: var(--jv-fg-faint);
+}
+.jv-btn--tiny {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+}
+.jv-btn--danger {
+  color: var(--jv-accent-red);
+  border-color: var(--jv-accent-red);
+}
+.jv-btn--primary {
+  color: var(--jv-bg);
+  background: var(--jv-accent-cyan);
+  border-color: var(--jv-accent-cyan);
+  font-weight: 600;
+}
+
+/* ---------- settings popover ---------- */
+.jv-settings-popover {
+  position: absolute;
+  top: 3.25rem;
+  right: 1rem;
+  width: 16rem;
+  background: var(--jv-panel-bg);
+  border: 1px solid var(--jv-border);
+  border-radius: 0.75rem;
+  padding: 0.85rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.jv-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--jv-fg-dim);
+  gap: 0.5rem;
+}
+.jv-settings-row select {
+  background: var(--jv-bg);
+  color: var(--jv-fg);
+  border: 1px solid var(--jv-border);
+  border-radius: 0.4rem;
+  padding: 0.2rem 0.4rem;
+}
+
+/* ---------- offline overlay ---------- */
+.jv-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 5, 8, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  backdrop-filter: blur(2px);
+}
+.jv-overlay-card {
+  background: var(--jv-panel-bg);
+  border: 1px solid var(--jv-border);
+  border-radius: 1rem;
+  padding: 1.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: 24rem;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.jv-overlay-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--jv-accent-red);
+}
+.jv-overlay-sub {
+  font-size: 0.85rem;
+  color: var(--jv-fg-dim);
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 860px) {
+  .jv-rightcol {
+    display: none;
+  }
+}

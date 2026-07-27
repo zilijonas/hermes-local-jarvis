@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.jarvis.dashboard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/agent/.hermes/hermes-agent/venv/bin/python</string>
+        <string>-m</string>
+        <string>hermes_cli.main</string>
+        <string>--profile</string>
+        <string>jarvis-voice</string>
+        <string>dashboard</string>
+        <string>--isolated</string>
+        <string>--port</string>
+        <string>9131</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--skip-build</string>
+        <string>--no-open</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/agent/.hermes/profiles/jarvis-voice</string>
+
+    <!-- EnvironmentVariables mirrors ai.hermes.gateway-local.plist's pattern
+         (VIRTUAL_ENV + venv/bin-first PATH prefix, then node/homebrew/system
+         bins, then HERMES_HOME) — verified against that file 2026-07-27.
+         Two Claude-plugin-cache PATH entries present in that reference file
+         are intentionally dropped: they belong to a different LaunchAgent's
+         toolchain and have no bearing on running the Hermes dashboard here. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>VIRTUAL_ENV</key>
+        <string>/Users/agent/.hermes/hermes-agent/venv</string>
+        <key>PATH</key>
+        <string>/Users/agent/.hermes/hermes-agent/venv/bin:/Users/agent/.hermes/hermes-agent/node_modules/.bin:/opt/homebrew/Cellar/node/26.0.0/bin:/Users/agent/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+        <key>HERMES_HOME</key>
+        <string>/Users/agent/.hermes/profiles/jarvis-voice</string>
+    </dict>
+
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+        <string>Background</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/agent/.hermes/profiles/jarvis-voice/logs/dashboard.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/agent/.hermes/profiles/jarvis-voice/logs/dashboard.err.log</string>
+</dict>
+</plist>

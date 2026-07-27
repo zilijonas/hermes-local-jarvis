@@ -1,0 +1,62 @@
+# Capability manifest — what Jarvis can do and what each capability needs.
+# kind: quick   → handled instantly inside jarvisd (no LLM worker)
+# kind: granite → Hermes worker session; `toolsets` = the ONLY toolsets passed via -t
+# kind: codex   → big delegated job via codex-task.sh
+# keywords are matched lexically + by embedding; keep them spoken-language flavored.
+
+- id: time.now
+  kind: quick
+  name: current time and date
+  keywords: [time, date, clock, today, "what day"]
+- id: system.status
+  kind: quick
+  name: system and jarvis health status
+  keywords: [status, health, memory usage, ram, uptime, "are you ok", diagnostics]
+- id: tasks.list
+  kind: quick
+  name: list active and recent tasks
+  keywords: [tasks, jobs, "what are you working on", progress, queue]
+- id: say.again
+  kind: quick
+  name: repeat last reply
+  keywords: [repeat, again, "say that again", pardon]
+
+- id: files.search
+  kind: granite
+  name: find or read files on this Mac
+  toolsets: [file]
+  keywords: [find file, read file, search files, folder, directory, open file, list files]
+- id: files.edit
+  kind: granite
+  name: create or modify a file
+  toolsets: [file]
+  keywords: [write file, edit, save note, create file, append]
+- id: shell.ops
+  kind: granite
+  name: run terminal commands / process checks
+  toolsets: [terminal]
+  keywords: [run command, terminal, process, kill, restart service, disk space, logs]
+- id: shell.files
+  kind: granite
+  name: combined file + terminal task
+  toolsets: [file, terminal]
+  keywords: [script, install, move files, backup, archive, organize]
+- id: web.lookup
+  kind: granite
+  name: look something up on the web
+  toolsets: [web]
+  keywords: [search web, look up, google, news, weather, price, wikipedia]
+- id: web.research.small
+  kind: granite
+  name: short web research with notes
+  toolsets: [web, file]
+  keywords: [research, compare, summarize article, find out about]
+
+- id: code.big
+  kind: codex
+  name: substantial coding or refactoring job
+  keywords: [implement, refactor, fix bug, write code, build feature, tests]
+- id: research.big
+  kind: codex
+  name: deep research or audit
+  keywords: [audit, deep research, analyze repo, investigate, report]

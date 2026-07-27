@@ -1,0 +1,4 @@
+name: jarvis-voice
+version: "0.1.0"
+description: "Local voice assistant (jarvisd) — dashboard proxy + minimal in-session status command"
+kind: standalone

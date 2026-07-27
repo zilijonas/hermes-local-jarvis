@@ -1,0 +1,37 @@
+[server]
+host = "127.0.0.1"
+port = 9140
+
+[ollama]
+url = "http://127.0.0.1:11434"
+mediator = "gemma4:e4b-it-qat"
+worker = "granite4.1-local-64k"
+embed = "nomic-embed-text"
+mediator_num_ctx = 8192
+keep_alive = "30m"
+
+[stt]
+model = "base.en"
+compute = "int8"
+device = "cpu"
+partial_interval_ms = 600
+
+[vad]
+aggressiveness = 2
+endpoint_ms = 500
+min_speech_ms = 200
+
+[tts]
+voice = "am_michael"
+speed = 1.1
+engine = "kokoro"
+fallback = "say"
+
+[paths]
+vault = "~/ai/memory/obsidian-vault"
+hermes_home = "~/.hermes/profiles/jarvis-voice"
+models = "~/ai/models"
+
+[budgets]
+context_card_tokens = 600
+mediator_history_turns = 12
