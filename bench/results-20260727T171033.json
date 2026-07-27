@@ -1,0 +1,103 @@
+{
+  "base_url": "http://127.0.0.1:9140",
+  "timestamp": "2026-07-27T17:11:23+0300",
+  "ram_before_gb": 4.47,
+  "ram_after_gb": 4.49,
+  "text_turns": [
+    {
+      "turn": 0,
+      "text": "what time is it?",
+      "wall_ms": 7551.2,
+      "reply_chars": 38,
+      "actions": [
+        "quick_action"
+      ]
+    },
+    {
+      "turn": 1,
+      "text": "hello jarvis",
+      "wall_ms": 1442.9,
+      "reply_chars": 38,
+      "actions": []
+    },
+    {
+      "turn": 2,
+      "text": "what's today's date?",
+      "wall_ms": 3936.4,
+      "reply_chars": 34,
+      "actions": []
+    }
+  ],
+  "text_wall_ms_stats": {
+    "p50": 3936.386208049953,
+    "p95": 7551.199457957409,
+    "min": 1442.8698749979958,
+    "max": 7551.199457957409,
+    "n": 3
+  },
+  "voice_turns": [
+    {
+      "stt_ms": 404.1282080579549,
+      "mediator_first_token_ms": 2089.0,
+      "first_tts_ms_after_mic_stop": 6611.301042023115,
+      "e2e_ms": 6611.301042023115,
+      "note": ""
+    },
+    {
+      "stt_ms": 381.6370000131428,
+      "mediator_first_token_ms": 1549.6,
+      "first_tts_ms_after_mic_stop": 5548.635208047926,
+      "e2e_ms": 5548.635208047926,
+      "note": ""
+    },
+    {
+      "stt_ms": 379.24545793794096,
+      "mediator_first_token_ms": 1472.4,
+      "first_tts_ms_after_mic_stop": 6372.182709048502,
+      "e2e_ms": 6372.182709048502,
+      "note": ""
+    },
+    {
+      "stt_ms": 382.084000040777,
+      "mediator_first_token_ms": 1485.5,
+      "first_tts_ms_after_mic_stop": 6336.165583110414,
+      "e2e_ms": 6336.165583110414,
+      "note": ""
+    },
+    {
+      "stt_ms": 387.516290997155,
+      "mediator_first_token_ms": 2252.7,
+      "first_tts_ms_after_mic_stop": 6803.493041894399,
+      "e2e_ms": 6803.493041894399,
+      "note": ""
+    }
+  ],
+  "voice_stt_ms_stats": {
+    "p50": 382.084000040777,
+    "p95": 404.1282080579549,
+    "min": 379.24545793794096,
+    "max": 404.1282080579549,
+    "n": 5
+  },
+  "voice_mediator_first_token_ms_stats": {
+    "p50": 1549.6,
+    "p95": 2252.7,
+    "min": 1472.4,
+    "max": 2252.7,
+    "n": 5
+  },
+  "voice_first_tts_ms_stats": {
+    "p50": 6372.182709048502,
+    "p95": 6803.493041894399,
+    "min": 5548.635208047926,
+    "max": 6803.493041894399,
+    "n": 5
+  },
+  "voice_e2e_ms_stats": {
+    "p50": 6372.182709048502,
+    "p95": 6803.493041894399,
+    "min": 5548.635208047926,
+    "max": 6803.493041894399,
+    "n": 5
+  }
+}

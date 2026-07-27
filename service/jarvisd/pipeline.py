@@ -199,18 +199,20 @@ class Pipeline:
                 self._speaker(sentence_q, turn_id, t_endpoint))
 
             sent_buf = ""
+            cuts_done = 0
 
             def on_delta(d: str) -> None:
-                nonlocal sent_buf
+                nonlocal sent_buf, cuts_done
                 self.bus.publish({"t": "mediator.delta", "text": d, "turn_id": turn_id})
                 sent_buf += d
                 while True:
-                    cut = self._sentence_cut(sent_buf)
+                    cut = self._sentence_cut(sent_buf, first=(cuts_done == 0))
                     if cut is None:
                         break
                     sentence, sent_buf = sent_buf[:cut].strip(), sent_buf[cut:]
                     if sentence:
                         sentence_q.put_nowait(sentence)
+                        cuts_done += 1
 
             def on_tool(name: str, args: dict, phase: str) -> None:
                 state = {"memory_recall": "memory", "capability_search": "capability",
@@ -308,13 +310,19 @@ class Pipeline:
         return ratio > 0.75 or text.lower() in last
 
     @staticmethod
-    def _sentence_cut(buf: str) -> Optional[int]:
+    def _sentence_cut(buf: str, first: bool = False) -> Optional[int]:
+        # First fragment cuts aggressively so TTS starts ASAP (kokoro synthesizes
+        # per-fragment; a short lead fragment shaves seconds off first audio).
+        min_len = 10 if first else 24
         for i, ch in enumerate(buf):
-            if ch in ".!?" and i >= 24 and (i + 1 == len(buf) or buf[i + 1] in " \n"):
+            if ch in ".!?" and i >= min_len and (i + 1 == len(buf) or buf[i + 1] in " \n"):
                 return i + 1
-        if len(buf) > 220:  # runaway clause — cut on last comma/space
-            j = max(buf.rfind(",", 0, 220), buf.rfind(" ", 0, 220))
-            return j + 1 if j > 40 else 220
+            if first and ch in ",;:" and i >= 16:
+                return i + 1
+        limit = 90 if first else 220
+        if len(buf) > limit:  # runaway clause — cut on last space
+            j = max(buf.rfind(",", 0, limit), buf.rfind(" ", 0, limit))
+            return j + 1 if j > min_len else limit
         return None
 
     # ------------------------------------------------------------- meta-tools

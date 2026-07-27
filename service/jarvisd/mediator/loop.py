@@ -163,7 +163,7 @@ class Mediator:
                    "keep_alive": self.keep_alive,
                    "options": {"num_ctx": self.num_ctx,
                                "temperature": self.temperature,
-                               "num_predict": 400}}
+                               "num_predict": 220}}
         async with self._client.stream("POST", f"{self.url}/api/chat",
                                        json=payload) as r:
             r.raise_for_status()

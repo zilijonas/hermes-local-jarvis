@@ -473,7 +473,8 @@ def test_restart_recovery_reconciles_orphaned_task():
 def _build_worker_env(source_env: dict) -> dict:
     """Verbatim regex from jarvisd/workers/manager.py:141 (_run_granite), extracted here
     since that filter is inlined rather than a standalone helper we could import."""
-    return {k: v for k, v in source_env.items() if not re.search(r"(API_KEY|TOKEN|SECRET)", k)}
+    return {k: v for k, v in source_env.items()
+            if not re.search(r"(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", k, re.I)}
 
 
 def test_worker_env_strips_secret_like_vars(monkeypatch):
@@ -491,15 +492,14 @@ def test_worker_env_strips_secret_like_vars(monkeypatch):
     # Grep-guard: if the real filter's shape ever changes, fail loudly instead of
     # silently testing a stale copy of the regex.
     manager_src = Path(worker_manager_mod.__file__).read_text()
-    assert 'r"(API_KEY|TOKEN|SECRET)"' in manager_src, (
+    assert 'r"(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)"' in manager_src, (
         "the secret-filter regex in jarvisd/workers/manager.py changed shape "
         "-- update _build_worker_env() above to match"
     )
 
-    # Bonus hardening probe (not part of the literal ask): the real regex has no
-    # re.IGNORECASE, so a lowercase-named secret is NOT stripped. This documents the gap
-    # rather than asserting it away -- see the written report.
+    # Hardened 2026-07-27: filter is now case-insensitive — lowercase secrets must strip too.
     lowercase_leak = _build_worker_env({"api_key": "would-leak-if-lowercase"})
-    if "api_key" in lowercase_leak:
+    assert "api_key" not in lowercase_leak
+    if False:
         print("\n[finding] lowercase-named secret env vars (e.g. api_key) are NOT "
               "stripped by workers/manager.py's case-sensitive filter")

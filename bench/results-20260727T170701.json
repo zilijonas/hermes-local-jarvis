@@ -1,0 +1,129 @@
+{
+  "base_url": "http://127.0.0.1:9140",
+  "timestamp": "2026-07-27T17:09:01+0300",
+  "ram_before_gb": 5.03,
+  "ram_after_gb": 4.31,
+  "text_turns": [
+    {
+      "turn": 0,
+      "text": "what time is it?",
+      "wall_ms": 22208.8,
+      "reply_chars": 32,
+      "actions": [
+        "quick_action",
+        "quick_action"
+      ]
+    },
+    {
+      "turn": 1,
+      "text": "hello jarvis",
+      "wall_ms": 4195.4,
+      "reply_chars": 38,
+      "actions": []
+    },
+    {
+      "turn": 2,
+      "text": "what's today's date?",
+      "wall_ms": 2732.6,
+      "reply_chars": 27,
+      "actions": []
+    },
+    {
+      "turn": 3,
+      "text": "are you doing okay?",
+      "wall_ms": 3506.9,
+      "reply_chars": 88,
+      "actions": []
+    },
+    {
+      "turn": 4,
+      "text": "list what you're working on",
+      "wall_ms": 22422.0,
+      "reply_chars": 153,
+      "actions": [
+        "quick_action"
+      ]
+    },
+    {
+      "turn": 5,
+      "text": "what do you know about this machine?",
+      "wall_ms": 18884.0,
+      "reply_chars": 256,
+      "actions": [
+        "memory_recall"
+      ]
+    }
+  ],
+  "text_wall_ms_stats": {
+    "p50": 4195.352207985707,
+    "p95": 22422.001958009787,
+    "min": 2732.621083036065,
+    "max": 22422.001958009787,
+    "n": 6
+  },
+  "voice_turns": [
+    {
+      "stt_ms": 403.44016707967967,
+      "mediator_first_token_ms": 3285.0,
+      "first_tts_ms_after_mic_stop": 8073.4462920809165,
+      "e2e_ms": 8073.4462920809165,
+      "note": ""
+    },
+    {
+      "stt_ms": 389.58229206036776,
+      "mediator_first_token_ms": 2809.5,
+      "first_tts_ms_after_mic_stop": 8907.547749928199,
+      "e2e_ms": 8907.547749928199,
+      "note": ""
+    },
+    {
+      "stt_ms": 411.17708303499967,
+      "mediator_first_token_ms": 2894.1,
+      "first_tts_ms_after_mic_stop": 7968.961792066693,
+      "e2e_ms": 7968.961792066693,
+      "note": ""
+    },
+    {
+      "stt_ms": 373.7052499782294,
+      "mediator_first_token_ms": 2709.2,
+      "first_tts_ms_after_mic_stop": 8879.128040978685,
+      "e2e_ms": 8879.128040978685,
+      "note": ""
+    },
+    {
+      "stt_ms": 418.46508299931884,
+      "mediator_first_token_ms": 2924.5,
+      "first_tts_ms_after_mic_stop": 7598.501541069709,
+      "e2e_ms": 7598.501541069709,
+      "note": ""
+    }
+  ],
+  "voice_stt_ms_stats": {
+    "p50": 403.44016707967967,
+    "p95": 418.46508299931884,
+    "min": 373.7052499782294,
+    "max": 418.46508299931884,
+    "n": 5
+  },
+  "voice_mediator_first_token_ms_stats": {
+    "p50": 2894.1,
+    "p95": 3285.0,
+    "min": 2709.2,
+    "max": 3285.0,
+    "n": 5
+  },
+  "voice_first_tts_ms_stats": {
+    "p50": 8073.4462920809165,
+    "p95": 8907.547749928199,
+    "min": 7598.501541069709,
+    "max": 8907.547749928199,
+    "n": 5
+  },
+  "voice_e2e_ms_stats": {
+    "p50": 8073.4462920809165,
+    "p95": 8907.547749928199,
+    "min": 7598.501541069709,
+    "max": 8907.547749928199,
+    "n": 5
+  }
+}
