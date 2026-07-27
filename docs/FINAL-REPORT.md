@@ -73,6 +73,20 @@ A production-installed, Hermes-native local voice assistant on the Mac mini M4 (
 7. Profile-scoped LaunchAgent logs not covered by the global logrotate (documented
    workaround in MAINTENANCE.md).
 
+## Build-cost model routing (credit optimization)
+The build itself followed an explicit cheap-model-for-simple-work policy:
+- **Sonnet 5 subagents (11 launches, 100% of delegated subtasks)**: all four read-only
+  exploration/audit agents (plugin API map, voice/UI stack map, profiles/sessions map,
+  vault audit), all five component builders (jarvisd core skeleton, audio modules,
+  Hermes plugin + install scripts, memory indexer, web UI), the integration-test suite
+  builder, and the ops-docs writer — every `Agent` call passed `model: sonnet`.
+- **Fable (main thread) reserved for**: architecture decisions, binding contracts
+  (SPEC.md), the four correctness-critical modules (mediator loop/prompt, worker
+  validation gate, capability router, pipeline orchestrator), cross-module integration,
+  live debugging, and this report.
+- Zero-token shell checks preferred over model calls throughout (md5/grep/curl audits,
+  `codex-task.sh status` availability gating).
+
 ## Launch
 - UI: http://127.0.0.1:9131/jarvis (Safari web-app wrapper can be pinned like the others)
 - Services: `launchctl kickstart -k gui/$(id -u)/local.jarvis.jarvisd` (and `.dashboard`)
