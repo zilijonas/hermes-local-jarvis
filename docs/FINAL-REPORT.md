@@ -1,4 +1,27 @@
-# Jarvis Voice — Final Delivery Report (2026-07-27)
+# Jarvis Voice — Final Delivery Report (2026-07-27, fixes round 2026-07-28)
+
+## Fixes round (user feedback, 2026-07-28)
+1. **Full-bleed layout**: host wrapper padding neutralized via `:has(#jarvis-voice-root)`
+   CSS; root height pinned to real viewport remainder in JS (the SPA's
+   `display:contents` + content-sized wrapper made `height:100%` useless). No page
+   overflow; right column and transcript scroll internally.
+2. **Mic**: click now TOGGLES listening (Space = hold-to-talk). Capture bugs fixed:
+   AudioContext resumed inside the gesture, linear-interpolation resampler (handles
+   44.1 kHz non-integer ratios), worklet/getUserMedia errors surfaced as banners,
+   live level meter + "mic is silent" hint. (The old press-and-release ~50 ms window
+   was why no words were ever recorded.)
+3. **Global dashboard**: plugin installed into the default dashboard (9119) —
+   Jarvis tab appears next to signal-engine/crypto-trader, including the
+   Tailscale-shared URL. jarvisd serves both dashboards.
+4. **Visualizer rebuilt to the OpenClaw-JARVIS look** (`jincocodev/openclaw-jarvis-ui`,
+   ISC — notices in THIRD_PARTY_LICENSES): Three.js wireframe icosahedron with
+   simplex-noise displacement, rim-concentrated Fresnel glow shell, additive particle
+   field; 14 state choreographies; **true voice sync** via an AnalyserNode on the
+   actually-played audio (not server events); Obsidian memory-hit constellation with
+   labeled note sprites; 60 fps, DPR-aware, context-loss recovery, reduced-motion mode.
+   Bundle 150 KB gz (three.js tree-shaken).
+5. Shipped to https://github.com/zilijonas/hermes-local-jarvis.
+
 
 ## What was delivered
 A production-installed, Hermes-native local voice assistant on the Mac mini M4 (24 GB):

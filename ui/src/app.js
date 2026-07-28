@@ -8,7 +8,7 @@ import { createStore, useStore, pushCapped, createLatencyTracker } from "./store
 import { createJarvisSocket } from "./ws.js";
 import { createMicInput } from "./audio-in.js";
 import { createAudioOutput } from "./audio-out.js";
-import { createVisualizer } from "./visualizer.js";
+import { createVisualizer } from "./visualizer/index.js";
 import { fetchJSON } from "./sdk.js";
 import { ConnectionBadge, OfflineOverlay, TextInputBar, RightColumn, SettingsPopover } from "./panels.js";
 
@@ -111,6 +111,7 @@ export function App() {
       health: null,
       latency: {},
       micError: null,
+      micHint: null,
     });
   }
   var store = storeRef.current;
@@ -121,6 +122,7 @@ export function App() {
   var wsRef = useRef(null);
   var audioOutRef = useRef(null);
   var latencyRef = useRef(null);
+  var micLevelBarRef = useRef(null);
   if (!latencyRef.current) latencyRef.current = createLatencyTracker(20);
   var pttRef = useRef({ start: function () {}, stop: function () {} });
 
@@ -162,6 +164,19 @@ export function App() {
     var audioOut = createAudioOutput();
     audioOut.setGain(store.get().volume);
     audioOutRef.current = audioOut;
+    // True voice sync: the orb reads the player's AnalyserNode once per
+    // frame, so speaking-state motion follows the audio actually heard.
+    // (tts.amp events remain the fallback when the analyser is unavailable.)
+    vis.setAudioSource(audioOut.getLevels);
+
+    // Client-side "is the mic actually producing signal" bookkeeping (see
+    // README §Mic troubleshooting). Plain closure vars, not store state:
+    // lastMicRms is written at mic-level frequency (~20Hz) and must never
+    // trigger a React re-render — see store.js's header comment on why
+    // high-frequency signals bypass the store entirely.
+    var lastMicRms = 0;
+    var micHeardActivity = false;
+    var silenceCheckTimer = null;
 
     var mic = createMicInput({
       onChunk: function (buf) {
@@ -170,8 +185,34 @@ export function App() {
       },
       onLevel: function (rms) {
         vis.onMicLevel(rms);
+        lastMicRms = rms;
+        if (micLevelBarRef.current) {
+          micLevelBarRef.current.style.width = Math.round(Math.min(1, rms) * 100) + "%";
+        }
+      },
+      onError: function (message) {
+        store.set({ micError: message });
+        pushTimeline("error", message);
       },
     });
+
+    // 2s after mic capture starts: if chunks are genuinely flowing locally
+    // (proves getUserMedia/worklet/graph all work) but the level stayed
+    // near-silent AND the server never showed real transcription activity,
+    // the mic is very likely capturing the wrong/muted input device rather
+    // than anything actually being broken in this UI.
+    function armSilenceCheck() {
+      clearTimeout(silenceCheckTimer);
+      micHeardActivity = false;
+      store.set({ micHint: null });
+      silenceCheckTimer = setTimeout(function () {
+        if (!store.get().micActive) return;
+        if (mic.getChunkCount() > 0 && lastMicRms < 0.02 && !micHeardActivity) {
+          store.set({ micHint: "Mic level is silent — check input device/permissions." });
+        }
+      }, 2000);
+    }
+
     var offlineGraceTimer = setTimeout(function () {
       if (store.get().connection !== "open") store.set({ offline: true });
     }, 1500);
@@ -181,15 +222,25 @@ export function App() {
       switch (msg.t) {
         case "state":
           store.set({ fsmState: msg.value, fsmDetail: msg.detail || null });
-          vis.setState(msg.value);
+          vis.setState(msg.value, msg.detail);
           pushTimeline("state", humanState(msg.value) + (msg.detail ? " — " + msg.detail : ""));
+          // "listening" is just the immediate ack of mic.start, not proof
+          // audio is really arriving — only states beyond that count as
+          // evidence the pipeline is doing something with real input.
+          if (msg.value !== "idle" && msg.value !== "listening") {
+            micHeardActivity = true;
+          }
           break;
         case "stt.partial":
           store.set({ sttPartial: msg.text || "" });
+          micHeardActivity = true;
+          if (store.get().micHint) store.set({ micHint: null });
           break;
         case "stt.final":
           store.set({ sttPartial: "", sttFinal: msg.text || "" });
           pushTimeline("stt.final", msg.text || "");
+          micHeardActivity = true;
+          if (store.get().micHint) store.set({ micHint: null });
           break;
         case "mediator.delta":
           store.set(function (st) {
@@ -230,6 +281,7 @@ export function App() {
         }
         case "memory.hits":
           store.set({ memoryHits: msg.items || [] });
+          vis.onMemoryHits(msg.items || []);
           pushTimeline("memory.hits", (msg.items || []).length + " hit(s)", msg.items);
           break;
         case "latency":
@@ -280,12 +332,15 @@ export function App() {
       }
       socket.send({ t: "mic.start" });
       mic.start();
+      armSilenceCheck();
     }
     function stopPtt() {
       if (!store.get().micActive) return;
       store.set({ micActive: false });
       mic.stop();
       socket.send({ t: "mic.stop" });
+      clearTimeout(silenceCheckTimer);
+      store.set({ micHint: null });
     }
 
     function onKeyDown(e) {
@@ -321,6 +376,7 @@ export function App() {
     return function cleanup() {
       clearTimeout(offlineGraceTimer);
       clearInterval(healthTimer);
+      clearTimeout(silenceCheckTimer);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       socket.close();
@@ -337,6 +393,28 @@ export function App() {
     },
     [s.reducedMotion]
   );
+  useEffect(function () {
+    // The host SPA mounts us under a `display: contents` parent inside a
+    // content-sized block wrapper, so `height: 100%` resolves to content
+    // height and the page silently clips. Pin the root to the real viewport
+    // remainder (top offset accounts for header/banner, which can change).
+    var root = document.getElementById("jarvis-voice-root");
+    if (!root) return;
+    function sync() {
+      var top = root.getBoundingClientRect().top;
+      root.style.height = Math.max(320, window.innerHeight - top) + "px";
+    }
+    sync();
+    window.addEventListener("resize", sync);
+    var ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(sync) : null;
+    if (ro && root.parentElement) ro.observe(document.body);
+    var t = setTimeout(sync, 500); // banner/theme settle
+    return function () {
+      window.removeEventListener("resize", sync);
+      if (ro) ro.disconnect();
+      clearTimeout(t);
+    };
+  }, []);
   useEffect(
     function () {
       if (audioOutRef.current) audioOutRef.current.setGain(s.volume);
@@ -358,13 +436,20 @@ export function App() {
     [s.rightCollapsed]
   );
 
-  function onPointerDown(e) {
+  // Desktop/mobile click on the mic button TOGGLES capture (first click
+  // starts + streams until a second click stops it). The previous
+  // pointerdown/pointerup wiring started capture on press and stopped it on
+  // release — a normal desktop click (press+release ~50ms) started, then
+  // immediately stopped, streaming zero audio. Space-bar hold (onKeyDown/
+  // onKeyUp above) remains true push-to-talk for keyboard users; the server
+  // VAD endpoints speech while toggled on, so leaving the mic open is fine.
+  function onPttClick(e) {
     e.preventDefault();
-    pttRef.current.start();
-  }
-  function onPointerUp(e) {
-    e.preventDefault();
-    pttRef.current.stop();
+    if (store.get().micActive) {
+      pttRef.current.stop();
+    } else {
+      pttRef.current.start();
+    }
   }
 
   function submitText(text) {
@@ -382,7 +467,7 @@ export function App() {
 
   return h(
     "div",
-    { className: "jv-root" },
+    { className: "jv-root", id: "jarvis-voice-root" },
     h(
       "header",
       { className: "jv-header" },
@@ -420,14 +505,17 @@ export function App() {
           { className: "jv-ptt-area" },
           h("button", {
             className: "jv-ptt-btn" + (s.micActive ? " jv-ptt-btn--active" : ""),
-            onPointerDown: onPointerDown,
-            onPointerUp: onPointerUp,
-            onPointerLeave: function (e) {
-              if (s.micActive) onPointerUp(e);
-            },
-            "aria-label": "Push to talk",
+            onClick: onPttClick,
+            "aria-label": s.micActive ? "Stop microphone" : "Start microphone",
+            "aria-pressed": s.micActive,
           }, "●"),
-          h("div", { className: "jv-ptt-label" }, s.micActive ? "Listening…" : humanState(s.fsmState)),
+          h("div", { className: "jv-ptt-label" }, s.micActive ? "Listening… (tap to stop)" : humanState(s.fsmState)),
+          h(
+            "div",
+            { className: "jv-mic-level-track" },
+            h("div", { className: "jv-mic-level-fill", ref: micLevelBarRef })
+          ),
+          h("div", { className: "jv-ptt-hint" }, "Click: toggle mic · Space: hold to talk"),
           h(
             "button",
             {
@@ -438,15 +526,37 @@ export function App() {
               title: "Continuous listening mode (experimental)",
             },
             s.micMode === "vad" ? "VAD mode: on (experimental)" : "VAD mode: off"
-          )
+          ),
+          s.micError || s.micHint
+            ? h(
+                "div",
+                { className: "jv-mic-banner" + (s.micError ? " jv-mic-banner--error" : " jv-mic-banner--hint") },
+                h("span", null, s.micError || s.micHint),
+                h(
+                  "button",
+                  {
+                    className: "jv-mic-banner-close",
+                    onClick: function () {
+                      store.set({ micError: null, micHint: null });
+                    },
+                    "aria-label": "Dismiss",
+                  },
+                  "×"
+                )
+              )
+            : null
         ),
         h(
           "div",
-          { className: "jv-transcript" },
-          partialText ? h("span", { className: "jv-transcript-partial" }, partialText) : null,
-          !partialText && transcriptText ? h("span", { className: "jv-transcript-final" }, transcriptText) : null
-        ),
-        h("div", { className: "jv-mediator-text" }, s.mediatorText)
+          { className: "jv-stage-text" },
+          h(
+            "div",
+            { className: "jv-transcript" },
+            partialText ? h("span", { className: "jv-transcript-partial" }, partialText) : null,
+            !partialText && transcriptText ? h("span", { className: "jv-transcript-final" }, transcriptText) : null
+          ),
+          h("div", { className: "jv-mediator-text" }, s.mediatorText)
+        )
       ),
       h(RightColumn, { store: store })
     ),

@@ -26,8 +26,9 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   height: 100%;
-  min-height: 100vh;
+  min-height: 0;
   width: 100%;
   box-sizing: border-box;
   background: var(--jv-bg);
@@ -37,6 +38,47 @@
 }
 .jv-root * {
   box-sizing: border-box;
+}
+
+/* ---------- host integration ----------
+ * The Hermes dashboard host mounts this plugin inside a wrapper div that
+ * carries Tailwind utility padding we cannot edit (host SPA is out of
+ * scope): classes include "... flex min-w-0 min-h-0 flex-1 flex-col px-3
+ * sm:px-6 pt-2 sm:pt-4 lg:pt-6". That padding ate into our full-bleed
+ * canvas/layout and (combined with .jv-root's old `min-height: 100vh`
+ * above) was the direct cause of document-level scrolling on the /jarvis
+ * tab. Target *only* the wrapper that directly contains our root element
+ * id — the :has(> #jarvis-voice-root) guard means this can never restyle
+ * any other host page or plugin, no matter how loosely the left-hand class
+ * selector is written. */
+div.flex-1.flex-col:has(> #jarvis-voice-root),
+div:has(> #jarvis-voice-root) {
+  padding: 0 !important;
+}
+
+/* Fallback for browsers without :has() support: the wrapper keeps its
+ * Tailwind padding (px-3 sm:px-6 pt-2 sm:pt-4 lg:pt-6, default Tailwind
+ * breakpoints sm=640px/lg=1024px), so cancel it out with a matching
+ * negative margin on our own root instead. Gated behind @supports so it
+ * never fires once :has() is supported — applying both at once would
+ * negative-margin an already-zeroed padding and pull the root outside the
+ * wrapper's bounds. */
+@supports not selector(:has(a)) {
+  #jarvis-voice-root {
+    margin: -0.5rem -0.75rem 0;
+  }
+  @media (min-width: 640px) {
+    #jarvis-voice-root {
+      margin-left: -1.5rem;
+      margin-right: -1.5rem;
+      margin-top: -1rem;
+    }
+  }
+  @media (min-width: 1024px) {
+    #jarvis-voice-root {
+      margin-top: -1.5rem;
+    }
+  }
 }
 
 /* ---------- header ---------- */
@@ -149,6 +191,7 @@
   flex-direction: column;
   align-items: center;
   min-width: 0;
+  min-height: 0;
   padding: 1rem 1.5rem 0.5rem;
   position: relative;
 }
@@ -163,6 +206,30 @@
   inset: 0;
   width: 100%;
   height: 100%;
+  display: block;
+}
+/* Subtle depth vignette behind the WebGL orb (renderer clears transparent) */
+.jv-stage-canvas-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 60% 50% at 50% 46%, rgba(34, 211, 238, 0.055), rgba(11, 11, 15, 0) 70%);
+}
+/* Reduced-motion mode: static orb + text state (visualizer/index.js) */
+.jv-vis-static-label {
+  position: absolute;
+  left: 50%;
+  bottom: 10%;
+  transform: translateX(-50%);
+  font-size: 0.78rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--jv-fg-dim);
+  pointer-events: none;
+  display: none;
+}
+.jv-vis-static-label--visible {
   display: block;
 }
 
@@ -213,8 +280,72 @@
   color: var(--jv-accent-purple);
   border-color: var(--jv-accent-purple);
 }
+.jv-ptt-hint {
+  font-size: 0.68rem;
+  color: var(--jv-fg-faint);
+}
+
+/* ---------- mic level meter ---------- */
+.jv-mic-level-track {
+  width: 6rem;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.jv-mic-level-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--jv-accent-cyan);
+  /* Updated imperatively (~20Hz) straight from the worklet's rms callback —
+   * bypasses React state on purpose, same rationale as visualizer.js's
+   * onMicLevel(). The transition just smooths between those DOM writes. */
+  transition: width 60ms linear;
+}
+
+/* ---------- mic error/hint banner ---------- */
+.jv-mic-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 22rem;
+  font-size: 0.75rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--jv-border);
+  background: var(--jv-bg-elevated);
+}
+.jv-mic-banner--error {
+  color: var(--jv-accent-red);
+  border-color: var(--jv-accent-red);
+}
+.jv-mic-banner--hint {
+  color: var(--jv-accent-amber);
+  border-color: var(--jv-accent-amber);
+}
+.jv-mic-banner-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0;
+}
 
 /* ---------- transcript / mediator ---------- */
+.jv-stage-text {
+  width: 100%;
+  max-width: 42rem;
+  flex: 0 1 auto;
+  min-height: 0;
+  /* Bounded + independently scrollable so a long reply/transcript can never
+   * force the whole stage (and therefore the page) taller than the
+   * available viewport — see docs task spec "Fix 2". */
+  max-height: min(40%, 18rem);
+  overflow-y: auto;
+}
 .jv-transcript {
   min-height: 1.6em;
   margin-top: 0.75rem;
@@ -245,6 +376,7 @@
   flex: none;
   width: 21rem;
   max-width: 32vw;
+  min-height: 0;
   border-left: 1px solid var(--jv-border);
   background: var(--jv-bg-elevated);
   display: flex;

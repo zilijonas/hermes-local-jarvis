@@ -18,6 +18,16 @@ export function createAudioOutput() {
   var readyPromise = null;
   var pendingGain = 1;
 
+  // AnalyserNode tap for the visualizer: worklet -> gain -> analyser ->
+  // destination, so getLevels() measures the audio the user actually hears
+  // (volume changes included) — not server-side amp events.
+  var analyser = null;
+  var freqData = null;
+  var timeFloat = null;
+  var timeByte = null;
+  var bandBins = null; // [lowEnd, midEnd, highEnd] as bin indices
+  var levelsOut = { level: 0, low: 0, mid: 0, high: 0 };
+
   function ensureReady() {
     if (readyPromise) return readyPromise;
     try {
@@ -31,13 +41,69 @@ export function createAudioOutput() {
         workletNode = new AudioWorkletNode(audioCtx, "player-worklet", { outputChannelCount: [1] });
         gainNode = audioCtx.createGain();
         gainNode.gain.value = pendingGain;
-        workletNode.connect(gainNode).connect(audioCtx.destination);
+        try {
+          analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 2048;
+          analyser.smoothingTimeConstant = 0.5;
+          freqData = new Uint8Array(analyser.frequencyBinCount);
+          if (typeof analyser.getFloatTimeDomainData === "function") {
+            timeFloat = new Float32Array(analyser.fftSize);
+          } else {
+            timeByte = new Uint8Array(analyser.fftSize);
+          }
+          // band edges in Hz -> bin indices for the actual context rate
+          var binHz = audioCtx.sampleRate / analyser.fftSize;
+          bandBins = [Math.round(250 / binHz), Math.round(2000 / binHz), Math.min(analyser.frequencyBinCount, Math.round(6000 / binHz))];
+          workletNode.connect(gainNode);
+          gainNode.connect(analyser);
+          analyser.connect(audioCtx.destination);
+        } catch (e) {
+          // Analyser unavailable — playback still works, visualizer falls
+          // back to server tts.amp events (getLevels() stays null).
+          analyser = null;
+          workletNode.connect(gainNode).connect(audioCtx.destination);
+        }
       })
       .catch(function (err) {
         readyPromise = null; // allow retry on the next queueChunk()
         throw err;
       });
     return readyPromise;
+  }
+
+  // Called by the visualizer ONCE PER FRAME. Returns null when the analyser
+  // tap isn't available/running (caller then falls back to tts.amp events).
+  // The returned object is reused across calls — read, don't retain.
+  function getLevels() {
+    if (!analyser || !audioCtx || audioCtx.state !== "running") return null;
+    var i;
+    var rms = 0;
+    if (timeFloat) {
+      analyser.getFloatTimeDomainData(timeFloat);
+      for (i = 0; i < timeFloat.length; i++) rms += timeFloat[i] * timeFloat[i];
+      rms = Math.sqrt(rms / timeFloat.length);
+    } else {
+      analyser.getByteTimeDomainData(timeByte);
+      for (i = 0; i < timeByte.length; i++) {
+        var v = (timeByte[i] - 128) / 128;
+        rms += v * v;
+      }
+      rms = Math.sqrt(rms / timeByte.length);
+    }
+    analyser.getByteFrequencyData(freqData);
+    var sums = [0, 0, 0];
+    var counts = [0, 0, 0];
+    var band = 0;
+    for (i = 0; i < bandBins[2]; i++) {
+      while (band < 2 && i >= bandBins[band]) band++;
+      sums[band] += freqData[i];
+      counts[band]++;
+    }
+    levelsOut.level = Math.min(1, rms * 4.5);
+    levelsOut.low = counts[0] ? sums[0] / (counts[0] * 255) : 0;
+    levelsOut.mid = counts[1] ? sums[1] / (counts[1] * 255) : 0;
+    levelsOut.high = counts[2] ? sums[2] / (counts[2] * 255) : 0;
+    return levelsOut;
   }
 
   // `data` is an ArrayBuffer/Int16Array of 24kHz mono s16le PCM (one TTS
@@ -71,7 +137,7 @@ export function createAudioOutput() {
     if (gainNode) gainNode.gain.value = v;
   }
 
-  return { queueChunk: queueChunk, hardStop: hardStop, setGain: setGain };
+  return { queueChunk: queueChunk, hardStop: hardStop, setGain: setGain, getLevels: getLevels };
 }
 
 function int16ToFloat32(int16) {

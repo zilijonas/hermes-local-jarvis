@@ -7,8 +7,13 @@
 // aliased local var) on purpose — it's a literal, bundler-proof anchor a
 // build-verification step can grep for.
 import { App } from "./app.js";
+import { createVisualizer } from "./visualizer/index.js";
 
 (function boot() {
+  // Harness/debug hook (see ui/dev-harness.html): lets the Three.js scene be
+  // created and driven directly, without the Hermes host or React. Exposed
+  // unconditionally (before the SDK guard) so the harness works from file://.
+  window.__JARVIS_VOICE_INTERNALS__ = { createVisualizer: createVisualizer };
   if (!window.__HERMES_PLUGIN_SDK__ || !window.__HERMES_PLUGINS__) return;
   window.__HERMES_PLUGINS__.register("jarvis-voice", App);
 })();

@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>jarvis-voice visualizer harness</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='none' stroke='%2322d3ee' stroke-width='1.5'/></svg>" />
+<!--
+  Standalone eyeball harness for the Three.js visualizer. No Hermes host, no
+  React, no jarvisd needed — works from file:// or `python3 -m http.server`
+  (run from the repo root or ui/).
+
+  It stubs the SDK globals, loads the REAL dist bundle, then drives the scene
+  through window.__JARVIS_VOICE_INTERNALS__.createVisualizer with a fake WS
+  event feed (same {t:"state"...}/{t:"tts.amp"...}/{t:"memory.hits"...}
+  shapes app.js consumes).
+
+  Drive it with:
+    - the state buttons below (one per FSM state)
+    - "auto demo" for a scripted full-pipeline sequence
+    - ?state=<name> to jump to a state on load, ?demo=1 to auto-run the script
+    - the mic slider (feeds onMicLevel; visible in `listening`)
+    - "speech: analyser stub" synthesizes getLevels() speech envelopes so the
+      `speaking` state reacts; uncheck to exercise the tts.amp fallback path
+-->
+<link rel="stylesheet" href="../hermes-plugin/dashboard/dist/style.css" />
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0b0f; color: #9ca3af;
+    font-family: system-ui, -apple-system, sans-serif; }
+  .hz-wrap { display: flex; flex-direction: column; height: 100%; }
+  .hz-stage { position: relative; flex: 1 1 auto; min-height: 0; }
+  .hz-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .hz-panel { flex: none; padding: 10px 12px; border-top: 1px solid #26262f;
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+  .hz-panel button { background: #15151b; color: #cbd5e1; border: 1px solid #26262f;
+    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+  .hz-panel button:hover { border-color: #4b5563; }
+  .hz-panel button.hz-on { border-color: #22d3ee; color: #22d3ee; }
+  .hz-sep { width: 1px; height: 20px; background: #26262f; margin: 0 4px; }
+  #hz-status { margin-left: auto; color: #6b7280; font-variant-numeric: tabular-nums; }
+  label { display: inline-flex; gap: 4px; align-items: center; }
+</style>
+</head>
+<body>
+<div class="hz-wrap">
+  <div class="hz-stage" id="hz-stage"><canvas id="hz-canvas"></canvas></div>
+  <div class="hz-panel" id="hz-states"></div>
+  <div class="hz-panel">
+    <button id="hz-demo">▶ auto demo</button>
+    <button id="hz-memory">memory.hits</button>
+    <div class="hz-sep"></div>
+    <label><input type="checkbox" id="hz-analyser" checked /> speech: analyser stub (uncheck = tts.amp fallback)</label>
+    <label>mic <input type="range" id="hz-mic" min="0" max="100" value="0" /></label>
+    <div class="hz-sep"></div>
+    <label><input type="checkbox" id="hz-reduced" /> reduced motion</label>
+    <button id="hz-losectx">lose GL context</button>
+    <span id="hz-status">idle</span>
+  </div>
+</div>
+
+<script>
+  // Stub the host globals BEFORE the bundle loads (register becomes a no-op;
+  // the bundle also exposes __JARVIS_VOICE_INTERNALS__ regardless).
+  window.__HERMES_PLUGIN_SDK__ = { React: { createElement: function () { return null; } }, hooks: {} };
+  window.__HERMES_PLUGINS__ = { register: function () {} };
+</script>
+<script src="../hermes-plugin/dashboard/dist/index.js"></script>
+<script>
+(function () {
+  var STATES = ["idle", "listening", "transcribing", "thinking", "memory", "capability", "tool",
+    "delegating", "worker_progress", "speaking", "interrupted", "blocked", "error", "done"];
+
+  var canvas = document.getElementById("hz-canvas");
+  var vis = window.__JARVIS_VOICE_INTERNALS__.createVisualizer(canvas);
+  window.__hzVis = vis; // QA scripting hook (e.g. inject a worst-case audio stub)
+  var statusEl = document.getElementById("hz-status");
+  var current = "idle";
+
+  // ---- fake analyser source: synthesized speech envelope while "speaking".
+  // This is a HARNESS STUB standing in for audio-out.js getLevels(); in the
+  // real app these numbers come from an AnalyserNode on actually-played TTS.
+  var speaking = false;
+  function stubLevels() {
+    if (!speaking) return { level: 0, low: 0, mid: 0, high: 0 };
+    var t = performance.now() / 1000;
+    // syllable-ish bursts: two beat frequencies + occasional pauses
+    var syl = Math.max(0, Math.sin(t * 7.1)) * Math.max(0, Math.sin(t * 2.3 + 1.2));
+    var pause = (Math.sin(t * 0.53) > 0.85) ? 0.1 : 1;
+    var level = Math.min(1, (0.18 + syl * 0.75) * pause);
+    return { level: level, low: level * 0.8, mid: level * 0.6, high: level * 0.35 };
+  }
+  var analyserToggle = document.getElementById("hz-analyser");
+  function applyAudioMode() {
+    vis.setAudioSource(analyserToggle.checked ? stubLevels : null);
+  }
+  analyserToggle.addEventListener("change", applyAudioMode);
+  applyAudioMode();
+
+  // amp fallback feed (~30Hz), used when the analyser stub is off
+  setInterval(function () {
+    if (!speaking || analyserToggle.checked) return;
+    vis.onAmp(stubLevels().level);
+  }, 33);
+
+  // ---- fake WS: same event shapes app.js consumes
+  function handleEvent(msg) {
+    switch (msg.t) {
+      case "state":
+        current = msg.value;
+        speaking = msg.value === "speaking";
+        vis.setState(msg.value, msg.detail);
+        statusEl.textContent = msg.value;
+        markActive();
+        break;
+      case "tts.amp":
+        vis.onAmp(msg.v);
+        break;
+      case "memory.hits":
+        vis.onMemoryHits(msg.items || []);
+        break;
+    }
+  }
+
+  var SAMPLE_HITS = [
+    { path: "notes/projects/hermes.md", title: "Hermes architecture", score: 0.92 },
+    { path: "notes/daily/2026-07-27.md", title: "Daily note 2026-07-27", score: 0.78 },
+    { path: "notes/ref/jarvis-voice-spec.md", title: "Jarvis voice spec", score: 0.66 },
+    { path: "notes/ideas/orb-visualizer.md", title: "Orb visualizer ideas", score: 0.51 },
+    { path: "notes/ref/obsidian-sync.md", title: "Obsidian sync", score: 0.4 },
+  ];
+
+  // ---- state buttons
+  var statesEl = document.getElementById("hz-states");
+  STATES.forEach(function (s) {
+    var b = document.createElement("button");
+    b.textContent = s;
+    b.dataset.state = s;
+    b.addEventListener("click", function () {
+      stopDemo();
+      handleEvent({ t: "state", value: s });
+      if (s === "memory") handleEvent({ t: "memory.hits", items: SAMPLE_HITS });
+    });
+    statesEl.appendChild(b);
+  });
+  function markActive() {
+    statesEl.querySelectorAll("button").forEach(function (b) {
+      b.classList.toggle("hz-on", b.dataset.state === current);
+    });
+  }
+
+  document.getElementById("hz-memory").addEventListener("click", function () {
+    handleEvent({ t: "memory.hits", items: SAMPLE_HITS });
+  });
+
+  // ---- mic slider -> onMicLevel at ~20Hz with a little natural wobble
+  var micSlider = document.getElementById("hz-mic");
+  setInterval(function () {
+    var v = micSlider.value / 100;
+    if (v > 0) vis.onMicLevel(v * (0.75 + 0.25 * Math.random()));
+  }, 50);
+
+  // ---- reduced motion / context loss
+  document.getElementById("hz-reduced").addEventListener("change", function (e) {
+    vis.setReducedMotion(e.target.checked);
+  });
+  document.getElementById("hz-losectx").addEventListener("click", function () {
+    var gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+    var ext = gl && gl.getExtension("WEBGL_lose_context");
+    if (!ext) return;
+    ext.loseContext();
+    setTimeout(function () { ext.restoreContext(); }, 1500);
+  });
+
+  // ---- scripted auto demo (full pipeline pass)
+  var SCRIPT = [
+    ["idle", 2000],
+    ["listening", 3000],
+    ["transcribing", 1800],
+    ["thinking", 3000],
+    ["memory", 2500, function () { handleEvent({ t: "memory.hits", items: SAMPLE_HITS }); }],
+    ["thinking", 2000],
+    ["capability", 1800],
+    ["tool", 2200],
+    ["delegating", 2600],
+    ["worker_progress", 3000],
+    ["speaking", 4500],
+    ["interrupted", 1400],
+    ["speaking", 2500],
+    ["done", 1800],
+    ["idle", 1500],
+  ];
+  var demoTimer = null;
+  var demoBtn = document.getElementById("hz-demo");
+  function stopDemo() {
+    if (demoTimer) { clearTimeout(demoTimer); demoTimer = null; }
+    demoBtn.textContent = "▶ auto demo";
+  }
+  function runDemo(idx) {
+    if (idx >= SCRIPT.length) { stopDemo(); return; }
+    var step = SCRIPT[idx];
+    handleEvent({ t: "state", value: step[0] });
+    if (step[2]) step[2]();
+    demoTimer = setTimeout(function () { runDemo(idx + 1); }, step[1]);
+  }
+  demoBtn.addEventListener("click", function () {
+    if (demoTimer) { stopDemo(); return; }
+    demoBtn.textContent = "■ stop demo";
+    runDemo(0);
+  });
+
+  // ---- query params: ?state=thinking / ?demo=1
+  var params = new URLSearchParams(location.search);
+  if (params.get("state")) {
+    handleEvent({ t: "state", value: params.get("state") });
+    if (params.get("state") === "memory") handleEvent({ t: "memory.hits", items: SAMPLE_HITS });
+  }
+  if (params.get("demo") === "1") {
+    demoBtn.textContent = "■ stop demo";
+    runDemo(0);
+  }
+})();
+</script>
+</body>
+</html>

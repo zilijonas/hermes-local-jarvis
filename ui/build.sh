@@ -42,10 +42,13 @@ DIST="../hermes-plugin/dashboard/dist"
 mkdir -p "$DIST"
 
 echo "-> bundling app -> $DIST/index.js"
+# --minify matters now that three.js is bundled (unminified it's ~1.2MB;
+# minified+gzipped the whole bundle is ~150-250KB).
 "$ESBUILD" src/index.js \
   --bundle \
   --format=iife \
   --target=es2020 \
+  --minify \
   --outfile="$DIST/index.js"
 
 echo "-> bundling mic-worklet -> $DIST/mic-worklet.js"
