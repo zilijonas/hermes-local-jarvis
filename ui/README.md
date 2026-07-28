@@ -1,225 +1,240 @@
-# jarvis-voice dashboard UI
+# jarvis-voice dashboard UI — Jarvis Command Centre
 
-Real frontend for the Jarvis voice assistant Hermes dashboard plugin. Bundled
-with esbuild into a single IIFE plus two standalone AudioWorklet files;
-consumed by `hermes-plugin/dashboard/manifest.json` (`entry`/`css`) and the
-Hermes dashboard host, which injects `window.__HERMES_PLUGIN_SDK__` /
+Real frontend for the Jarvis voice assistant Hermes dashboard plugin,
+rebuilt (2026-07-28) to the "Jarvis Command Centre" design prototype in
+`../design/Jarvis Command Centre.dc.html` (direction B: anchored core,
+flanked context). Bundled with esbuild into a single IIFE plus two
+standalone AudioWorklet files; consumed by
+`hermes-plugin/dashboard/manifest.json` (`entry`/`css`) and the Hermes
+dashboard host, which injects `window.__HERMES_PLUGIN_SDK__` /
 `window.__HERMES_PLUGINS__` before loading the script (see
 `../docs/hermes-plugin-api.md` §Frontend SDK).
 
 React is **not bundled** — components are built with a tiny `h()` helper
 (`src/h.js`) bound to `window.__HERMES_PLUGIN_SDK__.React.createElement` at
-runtime, so the shipped bundle only contains this plugin's own code.
+runtime. three.js is **gone** (the old WebGL orb was replaced by a 2D-canvas
+intelligence core), which took the main bundle from ~581 KB to ~75 KB raw.
+
+## Layout (ported from the prototype)
+
+- **≥1280px** — three columns: `SystemBar` on top (brand, LOCAL ONLY,
+  mediator/worker models, E2E first-audio p50, RAM free, connection pill,
+  MOTION toggle), then `MemoryColumn (304px) · Stage (1fr) · WorkColumn (372px)`.
+- **860–1279px** — memory column folds into a 4th "Memory" tab in the work
+  column (`minmax(0,1fr) 344px`); waterfall labels collapse to a single
+  `e2e —` figure; model stats hide progressively (1280/1024 thresholds).
+- **<860px** — `MobileShell`: header, core, active-task chip, conversation,
+  thumb composer (64px mic), and Tasks / Memory / Activity as bottom sheets
+  (safe-area padded, ≥44px targets).
+
+Breakpoints are driven by the **root element's width** (ResizeObserver →
+`store.w`), exactly like the prototype — not viewport media queries — so the
+plugin adapts to whatever column the dashboard gives it. No document scroll
+at any size: the only scroll containers are the memory list, the work-column
+tab body, the conversation log, and sheet bodies.
 
 ## Build
 
 ```sh
 cd ui
-npm install     # once — installs the esbuild devDependency
+npm install     # esbuild + tailwindcss/@tailwindcss/cli + postcss (+ React UMD for the harness)
 ./build.sh
 ```
-
-`build.sh` uses `node` at `/opt/homebrew/bin/node` by default (override with
-`NODE_BIN=...`), but in current esbuild versions `node_modules/esbuild/bin/esbuild`
-is a native binary invoked directly, not a Node script.
 
 Output goes to `../hermes-plugin/dashboard/dist/`:
 
 | File | What |
 |---|---|
 | `index.js` | IIFE bundle of `src/index.js` and everything it imports. Registers via `window.__HERMES_PLUGINS__.register("jarvis-voice", App)`. |
-| `style.css` | Copied verbatim from `src/style.css`. |
-| `mic-worklet.js` | `AudioWorkletProcessor` bundle, loaded at runtime via `audioContext.audioWorklet.addModule(...)`. Self-contained (no imports). |
-| `player-worklet.js` | Same, for TTS playback. |
+| `style.css` | `src/tokens.css` + `src/style.css` (hand layer) + compiled Tailwind utilities (`src/input.css`), all scoped under `#jarvis-voice-root` by `scope-css.mjs`. |
+| `mic-worklet.js` / `player-worklet.js` | AudioWorkletProcessor bundles, loaded at runtime via `audioContext.audioWorklet.addModule(...)`. |
 
-`build.sh` fails the build if `dist/index.js` doesn't contain the literal
-registration call, so a broken bundle can't silently ship.
+`build.sh` fails the build if (a) the registration call is missing from the
+bundle, (b) **any** selector in the final CSS lacks `#jarvis-voice-root`
+(scope-css.mjs leak check), or (c) any dist bundle fails `node --check`.
 
-Run `node ui/test-resample.mjs` to unit-verify the mic-worklet's linear
-resampling math in isolation (no browser/AudioWorklet runtime needed) — see
-§Mic behavior.
+### CSS pipeline (Tailwind v4, fully scoped)
+
+`src/input.css` is a CSS-first Tailwind v4 config that deliberately does NOT
+import `tailwindcss`: no preflight (its bare `*`/`html` resets would restyle
+the host dashboard), no default theme (only the `--jv-*` tokens are mapped,
+via `@theme inline`, so utilities compile to `var(--jv-*)` references), no
+cascade layers (unlayered host CSS would beat layered plugin CSS). Only
+`@tailwind utilities;` output is emitted, and `scope-css.mjs` (postcss)
+prefixes every selector with `#jarvis-voice-root`, rewrites any `:root`/
+`:host` to the plugin root, unwraps `@layer`, and then re-parses the result
+to assert zero unscoped selectors. Components use Tailwind utility classes
+(arbitrary values where the prototype's pixel values demand it); the hand
+layer (`src/style.css`) keeps only the neutraliser, root skeleton, mini
+reset, scrollbars, keyframes, focus rings and canvas positioning.
+
+`src/tokens.css` holds the design tokens (colors with AA-contrast notes,
+4px spacing scale, radii 5/9/12, elevation, motion durations + easing),
+scoped under `#jarvis-voice-root` — never `:root`.
 
 ## File map (`src/`)
 
-- **`index.js`** — entry point. Guards on both host globals being present
-  (mirrors the placeholder's contract), then registers `App` under the exact
-  name `"jarvis-voice"`.
-- **`app.js`** — top-level component. Wires `store` + `ws` + `audio-in` +
-  `audio-out` + `visualizer` together and renders the overall layout: header
-  (title, connection badge, settings gear), center stage (canvas, mic button +
-  level meter, mode toggle, mic error/hint banner, scrollable transcript +
-  mediator reply), right column, bottom text input, settings popover, offline
-  overlay. Root element carries `id="jarvis-voice-root"` (see `style.css`
-  below). Owns mic control (click-to-toggle + held Spacebar push-to-talk) and
-  barge-in wiring — see §Mic behavior.
-- **`ws.js`** — `createJarvisSocket()`: WebSocket client for
-  `/api/plugins/jarvis-voice/ws` per `../docs/SPEC.md` §WebSocket. Handles the
-  JSON/binary framing (a binary frame only means something right after a
-  `tts.chunk_hdr` text frame) and capped-exponential-backoff reconnect
-  (1s → 10s).
-- **`audio-in.js`** — `createMicInput()`: `getUserMedia` → `mic-worklet.js` →
-  16kHz mono s16le `ArrayBuffer` chunks (~40ms) + rms level callback + error
-  callback. Builds the audio graph once and keeps it alive across
-  toggle/PTT sessions; only a flag gates whether captured chunks are
-  forwarded. See §Mic behavior for the capture-reliability fixes.
-- **`style.css`** — also carries the host-integration rule that neutralizes
-  the Hermes dashboard SPA's wrapper padding around this plugin (see §Layout
-  & host integration below).
-- **`audio-out.js`** — `createAudioOutput()`: queues incoming TTS PCM chunks
-  into `player-worklet.js`'s ring buffer for gapless playback; `hardStop()`
-  for barge-in; naive linear resample if the browser doesn't honor a 24kHz
-  `AudioContext`. Also hosts the visualizer's AnalyserNode tap (worklet →
-  gain → analyser → destination): `getLevels()` returns time-domain RMS +
-  low/mid/high frequency bands of the audio actually being heard, read once
-  per frame by the visualizer.
-- **`visualizer/`** — `createVisualizer(canvas)`: Three.js cinematic orb
-  scene (bundled `three`, tree-shaken + minified). The orb (noise-displaced
-  wireframe icosahedron + backside additive Fresnel glow shell) and the
-  background particle field are ported from jincocodev/openclaw-jarvis-ui
-  (ISC — see `../THIRD_PARTY_LICENSES`). One distinct behavior per FSM state
-  (`visualizer/states.js`), ≤300ms blended transitions, memory.hits
-  constellation (`onMemoryHits`), DPR-capped rendering, hidden-tab pause,
-  reduced-motion static mode, WebGL context-loss recovery. Same imperative
-  `setState/onAmp/onMicLevel` API as before (plus `setAudioSource`,
-  `onMemoryHits`), deliberately kept outside React state.
-  Eyeball it without Hermes via `ui/dev-harness.html` (works from `file://`
-  or any static server; `?state=<name>`, `?demo=1`).
-- **`panels.js`** — right column (Activity timeline, Tasks board, Memory
-  sources, Health), the settings popover, the bottom text-input bar, and the
-  connection badge / offline overlay.
-- **`store.js`** — tiny framework-agnostic pub/sub store plus a `useStore()`
-  hook, a capped-array helper for the timeline, and a rolling p50/p95 latency
-  tracker.
-- **`sdk.js`** — all access to `window.__HERMES_PLUGIN_SDK__` /
-  `__HERMES_PLUGINS__` / `__HERMES_SESSION_TOKEN__` goes through here:
-  `fetchJSON`, `authedFetch`, `buildSocketUrl` (prefers the SDK's
-  `buildWsUrl`/`buildWsAuthParam` if present, else builds the URL manually),
-  `assetUrl` (worklet file URLs).
-- **`h.js`** — `h(type, props, ...children)` bound to the SDK's React.
-- **`worklets/mic-worklet.js`**, **`worklets/player-worklet.js`** —
-  `AudioWorkletProcessor` sources. Bundled separately (not part of the main
-  IIFE) since worklets run in their own global scope.
+- **`index.js`** — entry point. Guards on both host globals, registers under
+  the exact name `"jarvis-voice"`, and exposes
+  `window.__JARVIS_VOICE_INTERNALS__ = { createVisualizer, App }` for the
+  harness.
+- **`app.js`** — composition root. Owns the store, the WS event loop
+  (`onEvent`), audio in/out, the visualizer lifecycle, keyboard map, timers,
+  and renders `SystemBar · MemoryColumn · Stage · WorkColumn` or
+  `MobileShell`, plus the non-blocking `OfflineSheet`. Turn assembly lives
+  here: `stt.final`/`turn.text` push user turns; `mediator.delta` streams;
+  the reply commits to the log on `done`/`idle`/`interrupted` with meta
+  chips accumulated from `meta_tool` end events, `memory.hits` counts and
+  the turn's `e2e` latency. Also: per-turn waterfall (`turnLatency` from
+  `latency`/`stt.final`/`mediator.done`/`tts.end`), live tool chip
+  (`meta_tool` start/end), 1s ticker (runs only while something ticks),
+  retry countdown that mirrors ws.js's documented 1→10s backoff (ws.js
+  itself is untouched), memory-hit enrichment via `GET /memory/search`,
+  height pinning + root-width observation, and localStorage prefs
+  (`reducedMotion` — defaulting to the OS setting — and `volume`, which is
+  still applied to the player even though the redesign has no volume UI).
+- **`components/stage.js`** — turn strip (waterfall segments + labels ≥1280,
+  compact e2e below), canvas stage (state caption with prototype microcopy,
+  live meta-tool chip, INTELLIGENCE CORE / LATTICE·MODE labels),
+  conversation log (role gutters YOU/JARVIS/SYSTEM, live italic partial with
+  caret, streamed reply with the **currently-spoken sentence highlighted by
+  matching `tts.start` text**, meta chips), composer (mic button + ring,
+  input with ⌘K, Send, Interrupt — hot only while speaking, mode toggle,
+  mic level meter, mic error/hint banner).
+- **`components/memory.js`** — memory column / folded tab / mobile sheet:
+  debounced `GET /memory/search` box (search results replace the
+  recalled-this-turn list while a query is active), hit cards with score
+  bar, confidence, updated, conflict badge, snippet.
+- **`components/work.js`** — tabbed Work / Activity / System (+ Memory when
+  folded), tab counts, status-weighted task cards (running/queued first;
+  worker identity tag; elapsed ticking only while running; indeterminate
+  sweep bar — `task.update` has no numeric fraction, so the bar only ever
+  claims "running"; pause/resume/cancel/re-delegate/dismiss via
+  `POST /tasks/{id}/control`; Detail toggle fetches `GET /tasks/{id}` for
+  the event timeline, result and session id), activity stream with TRACE
+  DETAIL toggle, system tab (health chips from `/health`, per-stage latency
+  sparklines from a client-side rolling buffer of `latency` events, model
+  residency + unified-memory bar, barge-in/error session counters).
+- **`components/mobile.js`** — the <860px shell + bottom sheets.
+- **`components/util.js`** — shared helpers (`cls`, duration/clock/ts
+  parsing, chip/button class recipes, task sorting/counting, sparkline
+  points).
+- **`visualizer/core.js`** — the intelligence core: 2D-canvas port of the
+  prototype's renderer. Fibonacci-sphere lattice (118 points, 3-NN edges
+  precomputed once), rotating projection with vertex noise, horizon
+  ellipses, particle field, cached radial-gradient sprites for atmosphere +
+  nucleus (no per-frame gradients, no shadowBlur), 10 mode overlays for the
+  15 states, exponential blending `1−e^(−dt/95)` (~300 ms settle, never
+  snaps), one rAF, DPR cap 2, rAF pause on hidden tab, degradation ladder
+  (drop particles → drop horizon → halve lattice) and reduced-motion static
+  frame with dashed state ring. Speaking amplitude reads audio-out
+  `getLevels()` (RMS + low/mid/high tilt the spectrum spokes) with server
+  `tts.amp` as fallback; listening ripples ride the real mic rms; memory
+  stars are the actual `memory.hits` items pulled inward on tethered arcs;
+  `done` fires exactly one outward pulse ring.
+- **`visualizer/states.js`** — the 15-state parameter table (verbatim from
+  the prototype's `CORE`) + `STATE_META` caption microcopy + accent helper.
+  `offline` is client-derived (WS not open); the other 14 come from the
+  server FSM 1:1 — the UI never fakes states.
+- **`visualizer/index.js`** — public API, UNCHANGED from the three.js era:
+  `createVisualizer(canvas)` → `setState / onAmp / onMicLevel /
+  onMemoryHits / setAudioSource / setReducedMotion / resize / destroy`.
+  The visualizer is recreated when the layout crosses the 860px shell
+  boundary (the canvas element changes); state is re-applied on rebind.
+- **`store.js`** — pub/sub store + `useStore`, capped-array helper, rolling
+  p50/p95 latency tracker (now also exposes `series(stage)` for the
+  sparklines). High-frequency signals (mic rms ~20 Hz, tts.amp ~30 Hz,
+  analyser levels per frame) still bypass the store entirely.
+- **`ws.js`, `audio-in.js`, `audio-out.js`, `worklets/`, `sdk.js`, `h.js`**
+  — UNTOUCHED battle-tested transport/audio layer (see §Mic behavior).
 
-## Protocol assumptions made (verify against a live jarvisd if behavior looks off)
+## Store shape
 
-- **`buildWsUrl`/`buildWsAuthParam`**: documented in `../docs/hermes-plugin-api.md`
-  but not found anywhere in the actual Hermes source available at build time
-  (only in this repo's own docs). `sdk.js` calls them if present and falls
-  back to manually building `ws(s)://<host>/api/plugins/jarvis-voice/ws?token=...`
-  from `window.__HERMES_SESSION_TOKEN__` if not — this is the fallback the
-  task spec itself calls for.
-- **`window.HERMES_BASE_PATH`**: does not exist anywhere in the current
-  Hermes build or any sibling plugin (`crypto-trader`, `signal-engine`) —
-  those hardcode `/dashboard-plugins/<plugin>/dist/...`. `assetUrl()` still
-  checks it defensively (`window.HERMES_BASE_PATH || ""`) as a no-cost hook
-  in case a path prefix is added later.
-- **`GET /tasks` response shape**: SPEC.md says "task list" without pinning
-  down whether it's a bare array or `{tasks: [...]}`. `app.js`'s
-  `tasksFromResponse()` accepts either.
-- **`task.update` ordering**: the store stamps a local `updated_ts` on
-  receipt (the wire event has no timestamp field) so the Tasks board can sort
-  by most-recently-touched.
-- **`mode.set` persistence**: intentionally NOT persisted to localStorage
-  (unlike `reducedMotion` and `volume`, which the task spec explicitly calls
-  out) — VAD mode is marked experimental, so every fresh page load starts
-  back in push-to-talk as the conservative default.
-- **`worker_progress` visual**: SPEC's `task.update` payload has no numeric
-  progress fraction, so this state renders an indeterminate rotating progress
-  arc rather than a value-driven one — it's still purely a function of the
-  FSM state (a real server-pushed signal), not fabricated per-frame data.
+Pre-redesign keys are unchanged (`connection, offline, fsmState, fsmDetail,
+sttPartial, sttFinal, mediatorText, ttsPlaying, micActive, micMode,
+reducedMotion, volume, timeline, tasks, memoryHits, health, latency,
+micError, micHint`) plus the redesign keys `tab · sheet · expandedTask ·
+verbose` and supporting state (`w, turns, speakingText, toolChip, turnId,
+turnLatency, taskDetail, memQuery, memResults, bargeIns, errCount, tick,
+retryAttempt, retryAt, lastEventTs, offlineDismissed`).
+
+## Keyboard & accessibility
+
+Space = hold-to-talk (unchanged) · Esc = interrupt (barge_in + hardStop) ·
+1·2·3 = Work/Activity/System tabs · ⌘K/Ctrl-K = focus composer. Mic button
+carries `aria-pressed`; tabs are `role=tab` with `aria-selected`; partial
+transcript, streamed reply and the state caption are `aria-live=polite`
+regions; `:focus-visible` gets a 2px accent outline. Reduced motion (button
+or OS preference) renders a static core frame with a dashed state ring and
+stops all CSS animation; the offline card is a **non-blocking** status sheet
+(pointer events pass through around it), never a modal.
+
+## Protocol assumptions (beyond docs/SPEC.md)
+
+Everything listed in the pre-redesign README still holds (`buildWsUrl`
+fallback, `window.HERMES_BASE_PATH`, `GET /tasks` array-or-`{tasks}` shape,
+local `updated_ts` stamping, `mode.set` not persisted). New ones:
+
+- **Spoken-sentence highlight** matches the latest `tts.start` `text`
+  against the streamed `mediatorText` with `indexOf`; if the sentence isn't
+  in the stream yet, no highlight is shown (never guessed).
+- **`memory.hits` enrichment**: the event only carries `{path,title,score}`,
+  so the UI re-queries `GET /memory/search` (q = last user utterance, falls
+  back to the first hit's title) and merges by path — event scores win,
+  stale responses are dropped. Cards render fine without enrichment.
+- **`GET /tasks/{id}`** is parsed defensively: events from `events` /
+  `task_events`, task fields from the body or a nested `task`.
+- **Task elapsed** prefers `started`/`created` timestamps (epoch s, epoch
+  ms, or ISO — all parsed); falls back to the locally-stamped `updated_ts`.
+- **Retry countdown** in the offline sheet mirrors ws.js's documented
+  1→2→4→8→10s backoff client-side (ws.js exposes no timer); attempts are
+  inferred from reconnect status transitions, so the number is a faithful
+  approximation, not a server value.
+- **Unified-memory bar** renders only when `/health` provides
+  `ram.total_gb`; with `free_gb` alone it shows the number without a bar
+  (nothing invented).
+- **turn id** comes from the `turn_id` field any event may carry; "TURN —"
+  until the first one arrives.
 
 ## Layout & host integration
 
-The Hermes dashboard host mounts this plugin's root directly inside a wrapper
-`<div>` that carries Tailwind utility padding we cannot edit (host SPA source
-is out of scope): classes include `... flex min-w-0 min-h-0 flex-1 flex-col
-px-3 sm:px-6 pt-2 sm:pt-4 lg:pt-6`. `style.css` neutralizes exactly that
-wrapper — and only that wrapper — with:
-
-```css
-div.flex-1.flex-col:has(> #jarvis-voice-root),
-div:has(> #jarvis-voice-root) {
-  padding: 0 !important;
-}
-```
-
-The `:has(> #jarvis-voice-root)` guard is what makes this safe: it can only
-ever match an element that is the direct parent of this plugin's uniquely-ID'd
-root, so it never restyles any other host page or plugin regardless of how
-loosely the left-hand class selector is written. A `@supports not
-selector(:has(a))` fallback applies a matching negative margin directly on
-`#jarvis-voice-root` for browsers without `:has()` support; it's gated so it
-never doubles up once `:has()` does apply.
-
-Layout is a strict flex column, sized to fill the host's `flex-1` column
-(`.jv-root { flex: 1 1 auto; height: 100%; min-height: 0; overflow: hidden;
-display: flex; }`) — **no document-level scrolling** on `/jarvis` at any
-window size. The only scroll containers are:
-- `.jv-rightcol` (Activity / Tasks / Memory / Health) — `overflow-y: auto;
-  min-height: 0`.
-- `.jv-stage-text` (transcript + mediator reply, wrapped together under the
-  canvas) — capped at `min(40%, 18rem)` with its own `overflow-y: auto`, so a
-  long reply scrolls internally instead of growing the page.
-
-The bottom text-input bar (`.jv-textbar`) is `flex: none`, so it stays pinned
-to the bottom of the column.
+The `:has(> #jarvis-voice-root)` wrapper-padding neutraliser and its
+`@supports` fallback are KEPT VERBATIM in `src/style.css` (see that file's
+comment for the rationale), and the JS viewport-height pinning stays in
+`app.js` — the host mounts us under a `display:contents` parent whose block
+wrapper is content-sized, so the root's height is pinned to
+`window.innerHeight - top` on resize/mutation.
 
 ## Mic behavior
 
-- **Click = toggle, Space = push-to-talk.** Clicking the mic button starts
-  capture and streaming (`{"t":"mic.start"}`); a second click stops it
-  (`{"t":"mic.stop"}`). Holding the Spacebar (when focus isn't in a text
-  input) is separate, true push-to-talk: keydown starts, keyup stops — same
-  underlying `startPtt`/`stopPtt` as the click toggle. This replaced the old
-  pointerdown/pointerup wiring, where a normal desktop click (press+release,
-  ~50ms) started capture on press and immediately stopped it on release,
-  streaming zero audio — the exact "I cannot talk into it" bug this fixed.
-  While toggled on, the server's VAD still endpoints individual utterances
-  (`stt.final` etc.) even though the mic stays open the whole time.
-- **AudioContext resume() happens first, inside the click/keydown call
-  chain**, before `getUserMedia` is even requested — some browsers (Safari
-  especially) can drop "user activation" if `resume()` has to wait behind a
-  permission prompt that might sit open indefinitely. `audio-in.js` checks
-  `ctx.state === "running"` after resuming and reports an error if it isn't.
-- **Resampling never assumes 16kHz.** The real `AudioContext.sampleRate` is
-  read back (Safari ignores a `sampleRate` hint on the constructor) and
-  passed to the worklet via `processorOptions.sourceSampleRate`.
-  `worklets/mic-worklet.js` resamples with **linear interpolation**, which
-  handles non-integer ratios correctly (44100→16000 = 2.75625) — the previous
-  accumulate-and-average decimator was replaced for exactly this reason.
-  `ui/test-resample.mjs` unit-verifies the interpolation math in isolation
-  (`node ui/test-resample.mjs`): correct output-length ratio, no NaN, no
-  clipping, on more than one non-integer ratio.
-- **Visible mic level meter** (`.jv-mic-level-track`/`-fill`, next to the mic
-  button) is driven directly by the worklet's per-chunk `rms`, written
-  straight to the DOM (`style.width`) at ~20Hz — bypassing React state
-  entirely, same rationale as `visualizer.js`'s `onMicLevel()` (see
-  `store.js`'s header comment). `vis.onMicLevel(rms)` still receives the same
-  callback as before, so the canvas ripple is unaffected.
-- **Error/hint banner** (`.jv-mic-banner`, next to the mic button) surfaces:
-  - `getUserMedia` failures, mapped to plain language (permission denied, no
-    device, device busy, unsupported constraints).
-  - Insecure-context detection: if the page is served over plain `http://` on
-    a non-localhost host, `getUserMedia` doesn't exist at all —
-    `window.isSecureContext` is checked explicitly so this shows a clear
-    message instead of a confusing `TypeError`.
-  - Worklet load failures: `audioWorklet.addModule()` rejections are caught
-    and re-thrown as `"mic init failed: <original error>"`.
-  - A **silence hint**: if 2s after mic start, chunks are genuinely flowing
-    (`getChunkCount() > 0`, proving the capture graph itself works) but the
-    level stayed near-zero and the server never showed real transcription
-    activity (`stt.partial`/`stt.final`, or an FSM `state` beyond the initial
-    `listening` ack), the banner reads "Mic level is silent — check input
-    device/permissions" — this is almost always the wrong/muted input device,
-    not a bug in this UI.
-  - The banner has a dismiss (×) button; it also self-clears once real STT
-    activity is observed.
+Unchanged from the pre-redesign implementation (click = toggle, Space =
+true push-to-talk, AudioContext.resume() before getUserMedia, linear-interp
+resampling at the real device rate, silence hint 2s after start, error
+banner mapping). `node ui/test-resample.mjs` still unit-verifies the
+worklet's resampling math. The mic level meter and mic-button ring are
+written straight to the DOM at level-callback frequency; the visualizer
+consumes the same rms via `onMicLevel`.
+
+## Dev harness
+
+`ui/dev-harness.html` (from `file://` or any static server, after
+`npm install` + `./build.sh`):
+
+- **Full-app mode** (default): mounts the real bundle's App with React 18
+  UMD from `node_modules`, a fake WebSocket jarvisd feed and stubbed
+  `/api/plugins/jarvis-voice/*` endpoints. Pills for all 15 states,
+  ▶ RUN TURN scripted pipeline pass, `memory.hits` / `task.update`
+  injectors, go-offline toggle (drives real reconnect + offline sheet), and
+  width presets **1440 / 1024 / 390** for the responsive check.
+- **Visualizer-only mode**: `?vis=1` — drives the core directly (state
+  pills, mic slider, analyser stub, reduced-motion) with no React.
+- Query params: `?vis=1 · ?state=<name> · ?demo=1 · ?w=390`.
 
 ## Build output (last verified)
 
 ```
-index.js           ~581 KB raw / ~150 KB gzip (three.js bundled, minified)
-mic-worklet.js      ~2.3 KB
+index.js           ~75 KB raw / ~20 KB gzip   (was ~581 KB raw with three.js)
+style.css          ~40 KB raw / ~8 KB gzip    (tokens + hand layer + utilities)
+mic-worklet.js     ~2.3 KB
 player-worklet.js  ~1.5 KB
-style.css          ~15 KB
 ```

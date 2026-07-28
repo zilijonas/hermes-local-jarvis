@@ -1,31 +1,44 @@
-// app.js — top-level component: wires store + ws + audio-in/out + visualizer
-// + panels into the single-page layout described in the task spec (center
-// stage canvas/PTT/transcript, right column panels, bottom text input,
-// settings popover).
+// app.js — top-level component for the Jarvis Command Centre redesign.
+// Wires store + ws + audio-in/out + the 2D intelligence core together and
+// renders the "anchored core, flanked context" layout from the design
+// prototype: SystemBar · MemoryColumn (≥1280) · Stage · WorkColumn, with the
+// single-column MobileShell + bottom sheets below 860px (root width, not
+// viewport — measured via ResizeObserver like the prototype).
+//
+// The transport/audio layer (ws.js, audio-in.js, audio-out.js, worklets/*)
+// is untouched: mic toggle + Space push-to-talk + barge_in semantics, WS
+// framing, reconnect, and POST task-control paths all behave exactly as
+// before the redesign.
 import { h } from "./h.js";
-import { getHooks } from "./sdk.js";
+import { getHooks, fetchJSON, authedFetch } from "./sdk.js";
 import { createStore, useStore, pushCapped, createLatencyTracker } from "./store.js";
 import { createJarvisSocket } from "./ws.js";
 import { createMicInput } from "./audio-in.js";
 import { createAudioOutput } from "./audio-out.js";
 import { createVisualizer } from "./visualizer/index.js";
-import { fetchJSON } from "./sdk.js";
-import { ConnectionBadge, OfflineOverlay, TextInputBar, RightColumn, SettingsPopover } from "./panels.js";
+import { Stage, derivedState } from "./components/stage.js";
+import { MemoryColumn } from "./components/memory.js";
+import { WorkColumn } from "./components/work.js";
+import { MobileShell } from "./components/mobile.js";
+import { cls, fmtClock, fmtDur, countOpenTasks } from "./components/util.js";
 
 var TIMELINE_MAX = 200;
+var TURNS_MAX = 40;
 var HEALTH_POLL_MS = 15000;
+var MOBILE_BREAK = 860;
+var LEFT_COL_BREAK = 1280;
 
 var TIMELINE_ICON = {
-  state: "◆", // ◆
-  "stt.final": "▤", // ▤
-  "mediator.done": "▣", // ▣
-  meta_tool: "⚙", // ⚙
-  "tts.start": "♪", // ♪
+  state: "◆",
+  "stt.final": "▤",
+  "mediator.done": "▣",
+  meta_tool: "⚙",
+  "tts.start": "♪",
   "tts.end": "♪",
-  "task.update": "▦", // ▦
-  "memory.hits": "▥", // ▥
+  "task.update": "▦",
+  "memory.hits": "▥",
   health: "♥",
-  error: "✕", // ✕
+  error: "✕",
   "turn.text": "✎",
 };
 
@@ -52,13 +65,6 @@ function loadLocalFloat(key, fallback) {
     return fallback;
   }
 }
-function saveLocalFloat(key, v) {
-  try {
-    window.localStorage.setItem(key, String(v));
-  } catch (e) {
-    /* noop */
-  }
-}
 
 function isTypingTarget(el) {
   if (!el) return false;
@@ -67,7 +73,7 @@ function isTypingTarget(el) {
 }
 
 function humanState(s) {
-  return s
+  return String(s)
     .replace(/_/g, " ")
     .replace(/^./, function (c) {
       return c.toUpperCase();
@@ -83,6 +89,24 @@ function tasksFromResponse(data) {
   return map;
 }
 
+function detailString(obj) {
+  if (obj == null) return "";
+  if (typeof obj === "string") return obj;
+  try {
+    return JSON.stringify(obj, null, 2);
+  } catch (e) {
+    return String(obj);
+  }
+}
+
+// mirrors ws.js's capped exponential backoff (1s→2s→4s→8s→10s) for the
+// offline sheet's retry countdown — ws.js itself is deliberately untouched.
+function backoffForAttempt(attempt) {
+  return Math.min(1000 * Math.pow(2, Math.max(0, attempt - 1)), 10000);
+}
+
+// ---------------------------------------------------------------------------
+
 export function App() {
   var hooks = getHooks();
   var useEffect = hooks.useEffect;
@@ -91,6 +115,7 @@ export function App() {
   var storeRef = useRef(null);
   if (!storeRef.current) {
     storeRef.current = createStore({
+      // transport / turn state (unchanged shape)
       connection: "connecting",
       offline: false,
       fsmState: "idle",
@@ -101,10 +126,12 @@ export function App() {
       ttsPlaying: false,
       micActive: false,
       micMode: "ptt",
-      reducedMotion: loadLocalBool("jarvis-voice:reducedMotion", false),
+      // no stored preference → follow the OS-level reduced-motion setting
+      reducedMotion: loadLocalBool(
+        "jarvis-voice:reducedMotion",
+        !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+      ),
       volume: loadLocalFloat("jarvis-voice:volume", 1),
-      rightCollapsed: false,
-      settingsOpen: false,
       timeline: [],
       tasks: {},
       memoryHits: [],
@@ -112,39 +139,158 @@ export function App() {
       latency: {},
       micError: null,
       micHint: null,
+      // redesign keys
+      tab: "work", // 'work' | 'activity' | 'system' | 'memory'
+      sheet: null, // mobile bottom sheet: null | 'tasks' | 'memory' | 'activity'
+      expandedTask: null,
+      verbose: false,
+      // supporting state
+      w: typeof window !== "undefined" ? window.innerWidth : 1440,
+      turns: [],
+      speakingText: "",
+      toolChip: null,
+      turnId: null,
+      turnLatency: {},
+      taskDetail: {},
+      memQuery: "",
+      memResults: null,
+      bargeIns: 0,
+      errCount: 0,
+      tick: 0,
+      retryAttempt: 0,
+      retryAt: 0,
+      lastEventTs: 0,
+      offlineDismissed: false,
     });
   }
   var store = storeRef.current;
   var s = useStore(store);
 
-  var canvasRef = useRef(null);
+  var refsRef = useRef(null);
+  if (!refsRef.current) {
+    refsRef.current = {
+      canvasRef: { current: null },
+      logRef: { current: null },
+      levelRef: { current: null },
+      micRingRef: { current: null },
+      micRingMobileRef: { current: null },
+      composerInputRef: { current: null },
+    };
+  }
+  var refs = refsRef.current;
+
   var visRef = useRef(null);
   var wsRef = useRef(null);
   var audioOutRef = useRef(null);
   var latencyRef = useRef(null);
-  var micLevelBarRef = useRef(null);
   if (!latencyRef.current) latencyRef.current = createLatencyTracker(20);
   var pttRef = useRef({ start: function () {}, stop: function () {} });
+  var turnMetaRef = useRef([]);
+  var lastUserTextRef = useRef("");
+  var memSeqRef = useRef(0);
+  // written on EVERY ws event (incl. tts.amp at ~30Hz) — kept out of the
+  // store so it can't re-render the tree; copied in when going offline.
+  var lastEventTsRef = useRef(0);
 
-  function pushTimeline(type, label, details) {
+  function pushTimeline(type, label, detail, tone) {
     store.set(function (st) {
       return {
         timeline: pushCapped(
           st.timeline,
-          { id: type + ":" + Date.now() + ":" + Math.random(), ts: Date.now(), type: type, icon: TIMELINE_ICON[type] || "•", label: label, expandable: !!details, details: details },
+          {
+            id: type + ":" + Date.now() + ":" + Math.random(),
+            ts: Date.now(),
+            type: type,
+            icon: TIMELINE_ICON[type] || "•",
+            label: label,
+            detail: detailString(detail),
+            tone: tone || "dim",
+          },
           TIMELINE_MAX
         ),
       };
     });
   }
 
-  function resync() {
-    fetchJSON("/tasks")
+  function pushTurn(role, text, meta) {
+    store.set(function (st) {
+      return {
+        turns: pushCapped(
+          st.turns,
+          { id: role + ":" + Date.now() + ":" + Math.random(), role: role, text: text, time: fmtClock(Date.now()), meta: meta || [] },
+          TURNS_MAX
+        ),
+      };
+    });
+  }
+
+  // move the streamed mediator reply into the conversation log once the turn
+  // resolves (done / idle / interrupted)
+  function commitReply(reason) {
+    var st = store.get();
+    var text = (st.mediatorText || "").trim();
+    if (!text) return;
+    var meta = turnMetaRef.current.slice();
+    if (reason === "interrupted") meta.push("interrupted");
+    var e2e = st.turnLatency && st.turnLatency.e2e_first_audio;
+    if (typeof e2e === "number") meta.push("e2e " + (e2e / 1000).toFixed(2) + " s");
+    pushTurn("jarvis", text, meta);
+    turnMetaRef.current = [];
+    store.set({ mediatorText: "", speakingText: "" });
+  }
+
+  function beginTurn() {
+    turnMetaRef.current = [];
+    store.set({ turnLatency: {} });
+  }
+
+  function recordLatency(stage, ms) {
+    if (typeof ms !== "number") return;
+    latencyRef.current.record(stage, ms);
+    store.set(function (st) {
+      var tl = Object.assign({}, st.turnLatency);
+      tl[stage] = ms;
+      return { latency: latencyRef.current.summary(), turnLatency: tl };
+    });
+  }
+
+  // memory.hits arrives with {path,title,score} only — re-query the search
+  // endpoint (per spec) to enrich the cards with snippet/confidence/updated/
+  // conflict. Event scores win; stale responses are dropped.
+  function enrichMemoryHits(items) {
+    if (!items.length) return;
+    var seq = ++memSeqRef.current;
+    var q = lastUserTextRef.current || items[0].title || items[0].path || "";
+    if (!q) return;
+    fetchJSON("/memory/search?q=" + encodeURIComponent(q) + "&k=" + Math.max(items.length, 3))
       .then(function (data) {
-        store.set({ tasks: tasksFromResponse(data) });
+        if (seq !== memSeqRef.current) return;
+        var byPath = {};
+        ((data && data.hits) || []).forEach(function (hit) {
+          if (hit && hit.path) byPath[hit.path] = hit;
+        });
+        var merged = items.map(function (it) {
+          return Object.assign({}, byPath[it.path] || {}, it);
+        });
+        store.set({ memoryHits: merged });
       })
       .catch(function () {
-        /* offline overlay already reflects connectivity problems */
+        /* basic hits already shown; enrichment is best-effort */
+      });
+  }
+
+  function resync(announce) {
+    fetchJSON("/tasks")
+      .then(function (data) {
+        var map = tasksFromResponse(data);
+        store.set({ tasks: map });
+        if (announce) {
+          var open = countOpenTasks(map);
+          pushTurn("system", "Session resumed · " + open + " open task" + (open === 1 ? "" : "s") + " replayed from jarvis.db");
+        }
+      })
+      .catch(function () {
+        /* offline sheet already reflects connectivity problems */
       });
     fetchJSON("/health")
       .then(function (data) {
@@ -155,28 +301,19 @@ export function App() {
       });
   }
 
-  // Mount once: wire ws, audio, visualizer, health polling, keyboard PTT.
+  // ---- mount once: ws, audio, mic, keyboard, timers -----------------------
   useEffect(function () {
-    var vis = createVisualizer(canvasRef.current);
-    vis.setReducedMotion(store.get().reducedMotion);
-    visRef.current = vis;
-
     var audioOut = createAudioOutput();
     audioOut.setGain(store.get().volume);
     audioOutRef.current = audioOut;
-    // True voice sync: the orb reads the player's AnalyserNode once per
-    // frame, so speaking-state motion follows the audio actually heard.
-    // (tts.amp events remain the fallback when the analyser is unavailable.)
-    vis.setAudioSource(audioOut.getLevels);
 
     // Client-side "is the mic actually producing signal" bookkeeping (see
-    // README §Mic troubleshooting). Plain closure vars, not store state:
-    // lastMicRms is written at mic-level frequency (~20Hz) and must never
-    // trigger a React re-render — see store.js's header comment on why
-    // high-frequency signals bypass the store entirely.
+    // ui/README.md §Mic behavior). Plain closure vars — high-frequency
+    // signals never touch the store (see store.js header).
     var lastMicRms = 0;
     var micHeardActivity = false;
     var silenceCheckTimer = null;
+    var ringLevel = 0;
 
     var mic = createMicInput({
       onChunk: function (buf) {
@@ -184,23 +321,24 @@ export function App() {
         if (socket) socket.sendBinary(buf);
       },
       onLevel: function (rms) {
-        vis.onMicLevel(rms);
+        var on = store.get().micActive;
+        var v = on ? rms : 0;
         lastMicRms = rms;
-        if (micLevelBarRef.current) {
-          micLevelBarRef.current.style.width = Math.round(Math.min(1, rms) * 100) + "%";
-        }
+        if (visRef.current) visRef.current.onMicLevel(v);
+        ringLevel += (Math.min(1, v) - ringLevel) * 0.35;
+        if (refs.levelRef.current) refs.levelRef.current.style.width = Math.round(Math.min(1, v) * 100) + "%";
+        [refs.micRingRef.current, refs.micRingMobileRef.current].forEach(function (ring) {
+          if (!ring) return;
+          ring.style.opacity = on ? String(0.25 + ringLevel * 0.7) : "0";
+          ring.style.transform = "scale(" + (on ? 1 + ringLevel * 0.16 : 0.9) + ")";
+        });
       },
       onError: function (message) {
         store.set({ micError: message });
-        pushTimeline("error", message);
+        pushTimeline("error", message, null, "red");
       },
     });
 
-    // 2s after mic capture starts: if chunks are genuinely flowing locally
-    // (proves getUserMedia/worklet/graph all work) but the level stayed
-    // near-silent AND the server never showed real transcription activity,
-    // the mic is very likely capturing the wrong/muted input device rather
-    // than anything actually being broken in this UI.
     function armSilenceCheck() {
       clearTimeout(silenceCheckTimer);
       micHeardActivity = false;
@@ -219,17 +357,25 @@ export function App() {
 
     function onEvent(msg) {
       if (!msg || !msg.t) return;
+      lastEventTsRef.current = Date.now();
+      if (msg.turn_id != null && msg.turn_id !== store.get().turnId && msg.t !== "tts.amp") {
+        store.set({ turnId: msg.turn_id });
+      }
       switch (msg.t) {
         case "state":
           store.set({ fsmState: msg.value, fsmDetail: msg.detail || null });
-          vis.setState(msg.value, msg.detail);
-          pushTimeline("state", humanState(msg.value) + (msg.detail ? " — " + msg.detail : ""));
-          // "listening" is just the immediate ack of mic.start, not proof
-          // audio is really arriving — only states beyond that count as
-          // evidence the pipeline is doing something with real input.
-          if (msg.value !== "idle" && msg.value !== "listening") {
-            micHeardActivity = true;
-          }
+          pushTimeline(
+            "state",
+            humanState(msg.value) + (msg.detail ? " — " + msg.detail : ""),
+            null,
+            msg.value === "error" ? "red" : msg.value === "blocked" ? "amber" : "dim"
+          );
+          if (msg.value === "listening") beginTurn();
+          if (msg.value === "done" || msg.value === "idle") commitReply(msg.value);
+          if (msg.value === "interrupted") commitReply("interrupted");
+          // "listening" is just the mic.start ack — only states beyond it
+          // prove the pipeline heard real input (silence-hint logic).
+          if (msg.value !== "idle" && msg.value !== "listening") micHeardActivity = true;
           break;
         case "stt.partial":
           store.set({ sttPartial: msg.text || "" });
@@ -238,7 +384,10 @@ export function App() {
           break;
         case "stt.final":
           store.set({ sttPartial: "", sttFinal: msg.text || "" });
-          pushTimeline("stt.final", msg.text || "");
+          lastUserTextRef.current = msg.text || "";
+          if (msg.text) pushTurn("user", msg.text);
+          pushTimeline("stt.final", "Transcribed: “" + (msg.text || "") + "”", typeof msg.ms === "number" ? "stt.final ms: " + msg.ms : null, "dim");
+          recordLatency("stt", msg.ms);
           micHeardActivity = true;
           if (store.get().micHint) store.set({ micHint: null });
           break;
@@ -249,59 +398,89 @@ export function App() {
           break;
         case "mediator.done":
           store.set({ mediatorText: msg.text || "" });
-          pushTimeline("mediator.done", (msg.text || "").slice(0, 120));
-          if (typeof msg.ms_first_token === "number") latencyRef.current.record("mediator_first_token", msg.ms_first_token);
-          store.set({ latency: latencyRef.current.summary() });
+          pushTimeline(
+            "mediator.done",
+            "Mediator replied · " + (msg.text || "").split(/\s+/).length + " words",
+            detailString({ ms_first_token: msg.ms_first_token, ms_total: msg.ms_total }),
+            "dim"
+          );
+          recordLatency("mediator_first_token", msg.ms_first_token);
           break;
         case "meta_tool":
-          pushTimeline("meta_tool", msg.name + " (" + msg.phase + ")", { args: msg.args, result_summary: msg.result_summary, ms: msg.ms });
+          if (msg.phase === "start") {
+            store.set({ toolChip: { name: msg.name, start: Date.now() } });
+          } else {
+            store.set({ toolChip: null });
+            turnMetaRef.current.push(msg.name + (typeof msg.ms === "number" ? " · " + msg.ms + " ms" : ""));
+          }
+          pushTimeline(
+            "meta_tool",
+            msg.name + (msg.phase === "end" ? (msg.result_summary ? " → " + msg.result_summary : " finished") : " started"),
+            detailString({ args: msg.args, ms: msg.ms }),
+            "cyan"
+          );
           break;
         case "tts.start":
-          store.set({ ttsPlaying: true });
-          pushTimeline("tts.start", "Speaking: " + (msg.text || "").slice(0, 80));
+          if (!store.get().ttsPlaying) {
+            pushTimeline("tts.start", "TTS started · kokoro-onnx", null, "dim");
+          }
+          store.set({ ttsPlaying: true, speakingText: msg.text || "" });
           break;
         case "tts.chunk_hdr":
           // binary framing handled in ws.js; nothing to render per-chunk.
           break;
         case "tts.amp":
-          vis.onAmp(typeof msg.v === "number" ? msg.v : 0);
+          if (visRef.current) visRef.current.onAmp(typeof msg.v === "number" ? msg.v : 0);
           break;
         case "tts.end":
-          store.set({ ttsPlaying: false });
+          store.set({ ttsPlaying: false, speakingText: "" });
+          recordLatency("tts_first_chunk", msg.ms_first_chunk);
           break;
         case "task.update": {
           var updated = Object.assign({}, msg, { updated_ts: Date.now() });
           store.set(function (st) {
             var tasks = Object.assign({}, st.tasks);
-            tasks[msg.id] = updated;
+            tasks[msg.id] = Object.assign({}, tasks[msg.id] || {}, updated);
             return { tasks: tasks };
           });
-          pushTimeline("task.update", (msg.title || msg.id) + " — " + msg.status);
+          pushTimeline(
+            "task.update",
+            (msg.title || msg.id) + " → " + msg.status,
+            detailString({ progress_note: msg.progress_note, result_summary: msg.result_summary }),
+            msg.status === "failed" ? "red" : msg.status === "needs_review" ? "amber" : "cyan"
+          );
           break;
         }
-        case "memory.hits":
-          store.set({ memoryHits: msg.items || [] });
-          vis.onMemoryHits(msg.items || []);
-          pushTimeline("memory.hits", (msg.items || []).length + " hit(s)", msg.items);
+        case "memory.hits": {
+          var items = msg.items || [];
+          store.set({ memoryHits: items });
+          if (visRef.current) visRef.current.onMemoryHits(items);
+          turnMetaRef.current.push("memory_recall · " + items.length + " hit" + (items.length === 1 ? "" : "s"));
+          pushTimeline("memory.hits", "memory_recall → " + items.length + " hits", detailString(items), "cyan");
+          enrichMemoryHits(items);
           break;
+        }
         case "latency":
-          latencyRef.current.record(msg.stage, msg.ms);
-          store.set({ latency: latencyRef.current.summary() });
+          recordLatency(msg.stage, msg.ms);
           break;
         case "health":
           store.set({ health: msg });
+          pushTimeline("health", "Health changed", detailString(msg.components), "amber");
           break;
         case "error":
-          store.set({ micError: msg.message || "error" });
-          pushTimeline("error", msg.message || "error", msg);
+          store.set(function (st) {
+            return { errCount: st.errCount + 1 };
+          });
+          pushTimeline("error", msg.message || "error", detailString(msg), "red");
           break;
         case "pong":
           break;
         default:
-          pushTimeline(msg.t, msg.t);
+          pushTimeline(msg.t, msg.t, null, "dim");
       }
     }
 
+    var reconnectEvents = 0;
     var socket = createJarvisSocket({
       onEvent: onEvent,
       onBinary: function (buf) {
@@ -311,10 +490,20 @@ export function App() {
         store.set({ connection: status });
         if (status === "open") {
           clearTimeout(offlineGraceTimer);
-          store.set({ offline: false });
-          resync();
+          reconnectEvents = 0;
+          store.set({ offline: false, offlineDismissed: false, retryAttempt: 0, retryAt: 0 });
+          resync(true);
         } else if (status === "reconnecting") {
-          store.set({ offline: true });
+          // ws.js emits "reconnecting" twice per retry cycle (on schedule +
+          // on the attempt itself) — every 2nd event is one real attempt.
+          reconnectEvents++;
+          var attempt = Math.ceil(reconnectEvents / 2);
+          store.set({
+            offline: true,
+            retryAttempt: attempt,
+            retryAt: reconnectEvents % 2 === 1 ? Date.now() + backoffForAttempt(attempt) : store.get().retryAt,
+            lastEventTs: lastEventTsRef.current,
+          });
         }
       },
       onOpen: function () {
@@ -329,6 +518,9 @@ export function App() {
       if (store.get().ttsPlaying) {
         audioOut.hardStop();
         socket.send({ t: "barge_in" });
+        store.set(function (st) {
+          return { bargeIns: st.bargeIns + 1 };
+        });
       }
       socket.send({ t: "mic.start" });
       mic.start();
@@ -342,14 +534,38 @@ export function App() {
       clearTimeout(silenceCheckTimer);
       store.set({ micHint: null });
     }
+    pttRef.current.start = startPtt;
+    pttRef.current.stop = stopPtt;
+
+    function interrupt() {
+      audioOut.hardStop();
+      socket.send({ t: "barge_in" });
+      store.set(function (st) {
+        return { bargeIns: st.bargeIns + 1 };
+      });
+    }
+    pttRef.current.interrupt = interrupt;
 
     function onKeyDown(e) {
-      if (e.code !== "Space") return;
-      if (!document.hasFocus()) return;
-      if (isTypingTarget(document.activeElement)) return;
-      if (e.repeat) return;
-      e.preventDefault();
-      startPtt();
+      if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === "k") {
+        e.preventDefault();
+        if (refs.composerInputRef.current) refs.composerInputRef.current.focus();
+        return;
+      }
+      var typing = isTypingTarget(document.activeElement);
+      if (e.code === "Space") {
+        if (!document.hasFocus() || typing || e.repeat) return;
+        e.preventDefault();
+        startPtt();
+        return;
+      }
+      if (e.key === "Escape") {
+        interrupt();
+        return;
+      }
+      if (!typing && ["1", "2", "3"].indexOf(e.key) >= 0) {
+        store.set({ tab: ["work", "activity", "system"][+e.key - 1] });
+      }
     }
     function onKeyUp(e) {
       if (e.code !== "Space") return;
@@ -370,29 +586,56 @@ export function App() {
         });
     }, HEALTH_POLL_MS);
 
-    pttRef.current.start = startPtt;
-    pttRef.current.stop = stopPtt;
+    // 1s ticker — drives ticking task elapsed / tool chip / retry countdown,
+    // and ONLY runs a re-render when something actually needs it.
+    var tickTimer = setInterval(function () {
+      var st = store.get();
+      var anyRunning = Object.values(st.tasks || {}).some(function (t) {
+        return t.status === "running";
+      });
+      if (anyRunning || st.toolChip || st.connection !== "open") {
+        store.set(function (prev) {
+          return { tick: prev.tick + 1 };
+        });
+      }
+    }, 1000);
 
     return function cleanup() {
       clearTimeout(offlineGraceTimer);
       clearInterval(healthTimer);
+      clearInterval(tickTimer);
       clearTimeout(silenceCheckTimer);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       socket.close();
       mic.teardown();
-      vis.destroy();
+      if (visRef.current) {
+        visRef.current.destroy();
+        visRef.current = null;
+      }
     };
     // eslint-disable-next-line
   }, []);
 
-  useEffect(
-    function () {
-      if (visRef.current) visRef.current.setReducedMotion(s.reducedMotion);
-      saveLocalBool("jarvis-voice:reducedMotion", s.reducedMotion);
-    },
-    [s.reducedMotion]
-  );
+  // ---- root width (drives the 1280/860 layout modes, prototype-style) -----
+  useEffect(function () {
+    var root = document.getElementById("jarvis-voice-root");
+    if (!root) return;
+    function measure() {
+      var w = root.clientWidth || window.innerWidth;
+      if (Math.abs(w - store.get().w) > 4) store.set({ w: w });
+    }
+    measure();
+    var ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    if (ro) ro.observe(root);
+    window.addEventListener("resize", measure);
+    return function () {
+      if (ro) ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+
+  // ---- height pinning (unchanged) ------------------------------------------
   useEffect(function () {
     // The host SPA mounts us under a `display: contents` parent inside a
     // content-sized block wrapper, so `height: 100%` resolves to content
@@ -415,171 +658,307 @@ export function App() {
       clearTimeout(t);
     };
   }, []);
+
+  // ---- visualizer: (re)bind to whichever shell's canvas is mounted ---------
+  var isMobile = s.w < MOBILE_BREAK;
+  useEffect(
+    function () {
+      var canvas = refs.canvasRef.current;
+      if (!canvas) return;
+      var vis = createVisualizer(canvas);
+      visRef.current = vis;
+      if (audioOutRef.current) vis.setAudioSource(audioOutRef.current.getLevels);
+      vis.setReducedMotion(store.get().reducedMotion);
+      vis.setState(derivedState(store.get()));
+      vis.onMemoryHits(store.get().memoryHits);
+      return function () {
+        vis.destroy();
+        if (visRef.current === vis) visRef.current = null;
+      };
+    },
+    [isMobile]
+  );
+
+  // core follows the server FSM (plus client-derived offline) 1:1
+  useEffect(
+    function () {
+      if (visRef.current) visRef.current.setState(derivedState(s));
+    },
+    [s.fsmState, s.connection]
+  );
+
+  useEffect(
+    function () {
+      if (visRef.current) visRef.current.setReducedMotion(s.reducedMotion);
+      saveLocalBool("jarvis-voice:reducedMotion", s.reducedMotion);
+    },
+    [s.reducedMotion]
+  );
   useEffect(
     function () {
       if (audioOutRef.current) audioOutRef.current.setGain(s.volume);
-      saveLocalFloat("jarvis-voice:volume", s.volume);
     },
     [s.volume]
   );
-  useEffect(
-    function () {
-      // Right-column collapse changes the canvas's available width — nudge
-      // the visualizer to re-measure after the CSS transition settles.
-      var id = setTimeout(function () {
-        if (visRef.current) visRef.current.resize();
-      }, 260);
-      return function () {
-        clearTimeout(id);
-      };
-    },
-    [s.rightCollapsed]
-  );
 
-  // Desktop/mobile click on the mic button TOGGLES capture (first click
-  // starts + streams until a second click stops it). The previous
-  // pointerdown/pointerup wiring started capture on press and stopped it on
-  // release — a normal desktop click (press+release ~50ms) started, then
-  // immediately stopped, streaming zero audio. Space-bar hold (onKeyDown/
-  // onKeyUp above) remains true push-to-talk for keyboard users; the server
-  // VAD endpoints speech while toggled on, so leaving the mic open is fine.
-  function onPttClick(e) {
-    e.preventDefault();
-    if (store.get().micActive) {
-      pttRef.current.stop();
-    } else {
-      pttRef.current.start();
-    }
+  // ---- actions passed down --------------------------------------------------
+  var actRef = useRef(null);
+  if (!actRef.current) {
+    actRef.current = {
+      onMicClick: function (e) {
+        // Click = toggle capture (press+release must NOT stop it — see
+        // ui/README.md §Mic behavior); Space hold stays true push-to-talk.
+        if (e) e.preventDefault();
+        if (store.get().micActive) pttRef.current.stop();
+        else pttRef.current.start();
+      },
+      interrupt: function () {
+        pttRef.current.interrupt();
+      },
+      submitText: function (text) {
+        lastUserTextRef.current = text;
+        beginTurn();
+        pushTurn("user", text);
+        if (wsRef.current) wsRef.current.send({ t: "turn.text", text: text });
+        pushTimeline("turn.text", "Typed turn: " + text, null, "dim");
+      },
+      setMicMode: function (mode) {
+        store.set({ micMode: mode });
+        if (wsRef.current) wsRef.current.send({ t: "mode.set", mode: mode });
+      },
+      taskControl: function (id, action) {
+        pushTimeline("task.update", "task_control(" + action + ") → " + id, null, action === "cancel" ? "amber" : "cyan");
+        authedFetch("/tasks/" + encodeURIComponent(id) + "/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: action }),
+        })
+          .then(function (res) {
+            return res.ok ? res.json() : null;
+          })
+          .then(function (data) {
+            if (data && data.status) {
+              store.set(function (st) {
+                var tasks = Object.assign({}, st.tasks);
+                if (tasks[id]) tasks[id] = Object.assign({}, tasks[id], { status: data.status, updated_ts: Date.now() });
+                return { tasks: tasks };
+              });
+            }
+          })
+          .catch(function () {
+            /* task.update events / connection status carry the truth */
+          });
+      },
+      toggleTaskDetail: function (id) {
+        var st = store.get();
+        var next = st.expandedTask === id ? null : id;
+        store.set({ expandedTask: next });
+        if (next && !st.taskDetail[id]) {
+          store.set(function (prev) {
+            var d = Object.assign({}, prev.taskDetail);
+            d[id] = { loading: true };
+            return { taskDetail: d };
+          });
+          fetchJSON("/tasks/" + encodeURIComponent(id))
+            .then(function (data) {
+              var task = (data && (data.task || data)) || {};
+              store.set(function (prev) {
+                var d = Object.assign({}, prev.taskDetail);
+                d[id] = {
+                  loading: false,
+                  events: (data && (data.events || data.task_events)) || task.events || [],
+                  result_text: task.result_text || "",
+                  result_summary: task.result_summary || "",
+                  session_id: task.session_id || task.session || "",
+                };
+                return { taskDetail: d };
+              });
+            })
+            .catch(function (err) {
+              store.set(function (prev) {
+                var d = Object.assign({}, prev.taskDetail);
+                d[id] = { loading: false, error: (err && err.message) || "request failed" };
+                return { taskDetail: d };
+              });
+            });
+        }
+      },
+      getSeries: function (stage) {
+        return latencyRef.current.series(stage);
+      },
+      toggleReduced: function () {
+        store.set(function (st) {
+          return { reducedMotion: !st.reducedMotion };
+        });
+      },
+    };
   }
+  var act = actRef.current;
 
-  function submitText(text) {
-    if (wsRef.current) wsRef.current.send({ t: "turn.text", text: text });
-    pushTimeline("turn.text", text);
-  }
-
-  function setMicMode(mode) {
-    store.set({ micMode: mode });
-    if (wsRef.current) wsRef.current.send({ t: "mode.set", mode: mode });
-  }
-
-  var transcriptText = s.sttFinal;
-  var partialText = s.sttPartial;
+  // ---- render ----------------------------------------------------------------
+  var showLeft = s.w >= LEFT_COL_BREAK;
 
   return h(
     "div",
     { className: "jv-root", id: "jarvis-voice-root" },
-    h(
-      "header",
-      { className: "jv-header" },
-      h("div", { className: "jv-header-title" }, "JARVIS"),
-      h(
-        "div",
-        { className: "jv-header-right" },
-        h(ConnectionBadge, { status: s.connection }),
-        h(
-          "button",
-          {
-            className: "jv-icon-btn",
-            title: "Settings",
-            onClick: function () {
-              store.set({ settingsOpen: !s.settingsOpen });
+    isMobile
+      ? h(MobileShell, { store: store, act: act, refs: refs })
+      : h(
+          "div",
+          { className: "absolute inset-0 flex flex-col" },
+          h(SystemBar, { s: s, act: act }),
+          h(
+            "div",
+            {
+              className: cls("flex-1 min-h-0 grid", showLeft ? "grid-cols-[304px_minmax(0,1fr)_372px]" : "grid-cols-[minmax(0,1fr)_344px]"),
             },
-          },
-          "⚙"
-        )
-      )
+            showLeft ? h(MemoryColumn, { store: store }) : null,
+            h(Stage, { store: store, act: act, refs: refs }),
+            h(WorkColumn, { store: store, act: act, showLeft: showLeft })
+          )
+        ),
+    h(OfflineSheet, { s: s, store: store, act: act, onRetry: function () {
+      if (wsRef.current) wsRef.current.forceReconnect();
+    } })
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function SystemBar(props) {
+  var s = props.s;
+  var act = props.act;
+  var conn = { open: ["#4FE3E0", "connected"], connecting: ["#F2B35C", "connecting…"], reconnecting: ["#F2B35C", "reconnecting…"], closed: ["#FF6B6B", "offline"] }[s.connection] || ["#FF6B6B", "offline"];
+  var models = (s.health && s.health.models) || {};
+  var ram = s.health && s.health.ram && typeof s.health.ram.free_gb === "number" ? s.health.ram.free_gb.toFixed(1) + " GB" : "—";
+  var e2e = s.latency.e2e_first_audio && s.latency.e2e_first_audio.p50 != null ? (s.latency.e2e_first_audio.p50 / 1000).toFixed(2) + " s" : "—";
+
+  function stat(label, value, mono) {
+    return h(
+      "div",
+      { className: "flex-none whitespace-nowrap" },
+      h("div", { className: "text-[9px] tracking-[.16em] text-faint" }, label),
+      h("div", { className: cls("text-[11px] mt-[2px]", mono ? "font-mono" : "", value === "—" ? "text-faint" : "text-text") }, value)
+    );
+  }
+
+  return h(
+    "div",
+    {
+      className:
+        "flex-none h-[52px] flex items-center gap-5 px-[18px] border-b border-[rgba(120,190,200,.10)] bg-gradient-to-b from-[rgba(14,22,26,.9)] to-[rgba(8,12,14,.9)]",
+    },
+    h(
+      "div",
+      { className: "flex items-center gap-[10px]" },
+      h("div", { className: "w-2 h-2 rounded-full bg-accent shadow-bloom" }),
+      h("div", { className: "text-[12px] tracking-[.36em] font-semibold text-text" }, "JARVIS")
     ),
     h(
       "div",
-      { className: "jv-body" },
-      h(
-        "main",
-        { className: "jv-stage" },
-        h(
-          "div",
-          { className: "jv-stage-canvas-wrap" },
-          h("canvas", { ref: canvasRef, className: "jv-canvas" })
-        ),
-        h(
-          "div",
-          { className: "jv-ptt-area" },
-          h("button", {
-            className: "jv-ptt-btn" + (s.micActive ? " jv-ptt-btn--active" : ""),
-            onClick: onPttClick,
-            "aria-label": s.micActive ? "Stop microphone" : "Start microphone",
-            "aria-pressed": s.micActive,
-          }, "●"),
-          h("div", { className: "jv-ptt-label" }, s.micActive ? "Listening… (tap to stop)" : humanState(s.fsmState)),
-          h(
-            "div",
-            { className: "jv-mic-level-track" },
-            h("div", { className: "jv-mic-level-fill", ref: micLevelBarRef })
-          ),
-          h("div", { className: "jv-ptt-hint" }, "Click: toggle mic · Space: hold to talk"),
-          h(
-            "button",
-            {
-              className: "jv-mode-toggle" + (s.micMode === "vad" ? " jv-mode-toggle--active" : ""),
-              onClick: function () {
-                setMicMode(s.micMode === "ptt" ? "vad" : "ptt");
-              },
-              title: "Continuous listening mode (experimental)",
-            },
-            s.micMode === "vad" ? "VAD mode: on (experimental)" : "VAD mode: off"
-          ),
-          s.micError || s.micHint
-            ? h(
-                "div",
-                { className: "jv-mic-banner" + (s.micError ? " jv-mic-banner--error" : " jv-mic-banner--hint") },
-                h("span", null, s.micError || s.micHint),
-                h(
-                  "button",
-                  {
-                    className: "jv-mic-banner-close",
-                    onClick: function () {
-                      store.set({ micError: null, micHint: null });
-                    },
-                    "aria-label": "Dismiss",
-                  },
-                  "×"
-                )
-              )
-            : null
-        ),
-        h(
-          "div",
-          { className: "jv-stage-text" },
-          h(
-            "div",
-            { className: "jv-transcript" },
-            partialText ? h("span", { className: "jv-transcript-partial" }, partialText) : null,
-            !partialText && transcriptText ? h("span", { className: "jv-transcript-final" }, transcriptText) : null
-          ),
-          h("div", { className: "jv-mediator-text" }, s.mediatorText)
-        )
-      ),
-      h(RightColumn, { store: store })
+      { className: "flex items-center gap-[6px] px-2 py-1 border border-[rgba(120,190,200,.16)] rounded-[4px] whitespace-nowrap flex-none" },
+      h("div", { className: "text-[9px] tracking-[.14em] text-[#7FA0A5]" }, "LOCAL ONLY"),
+      h("div", { className: "text-[9px] text-accent" }, "◆")
     ),
-    h(TextInputBar, { onSubmit: submitText }),
-    h(SettingsPopover, {
-      open: s.settingsOpen,
-      settings: s,
-      onClose: function () {
-        store.set({ settingsOpen: false });
+    h("div", { className: "w-px h-[22px] bg-[rgba(120,190,200,.12)]" }),
+    h(
+      "div",
+      { className: "flex items-center gap-[22px] min-w-0 overflow-hidden" },
+      s.w >= 1280 ? stat("MEDIATOR", (models.mediator && models.mediator.name) || "—", true) : null,
+      s.w >= 1280 ? stat("WORKER", (models.worker && models.worker.name) || "—", true) : null,
+      s.w >= 1024 ? stat("E2E FIRST AUDIO", e2e, true) : null,
+      stat("RAM FREE", ram, true)
+    ),
+    h("div", { className: "flex-1" }),
+    h(
+      "div",
+      { className: "flex items-center gap-[7px] px-[10px] py-[5px] rounded-full border border-[rgba(120,190,200,.14)]" },
+      h("div", {
+        className: cls("w-[7px] h-[7px] rounded-full flex-none", s.connection !== "open" ? "jv-blink" : ""),
+        style: { background: conn[0], boxShadow: "0 0 9px 1px " + conn[0] + "66" },
+      }),
+      h("div", { className: "text-[11px] text-[#C8DBDE] tracking-[.02em]" }, conn[1])
+    ),
+    h(
+      "button",
+      {
+        onClick: act.toggleReduced,
+        "aria-label": "Toggle reduced motion",
+        "aria-pressed": s.reducedMotion,
+        className: cls(
+          "h-7 px-[10px] rounded-[6px] border text-[10px] tracking-[.12em] cursor-pointer whitespace-nowrap flex-none",
+          s.reducedMotion
+            ? "border-[rgba(242,179,92,.4)] bg-[rgba(242,179,92,.1)] text-warn"
+            : "border-[rgba(120,190,200,.16)] bg-[rgba(20,32,36,.6)] text-dim hover:border-[rgba(79,227,224,.45)] hover:text-text"
+        ),
       },
-      onMicModeChange: setMicMode,
-      onReducedMotionChange: function (v) {
-        store.set({ reducedMotion: v });
+      s.reducedMotion ? "MOTION OFF" : "MOTION ON"
+    )
+  );
+}
+
+// Offline: a NON-BLOCKING bottom sheet (pointer events pass through around
+// the card) — voice capture is paused but the rest of the UI stays usable.
+function OfflineSheet(props) {
+  var s = props.s;
+  var store = props.store;
+  if (!s.offline || s.offlineDismissed) return null;
+  void s.tick; // re-render each second for the countdown
+  var retryIn = s.retryAt ? Math.max(0, Math.ceil((s.retryAt - Date.now()) / 1000)) : null;
+  var lastAgo = s.lastEventTs ? fmtDur((Date.now() - s.lastEventTs) / 1000) : null;
+  return h(
+    "div",
+    { className: "absolute inset-x-0 bottom-0 flex justify-center pb-[110px] pointer-events-none z-40" },
+    h(
+      "div",
+      {
+        role: "status",
+        className:
+          "pointer-events-auto w-[min(520px,86%)] px-5 py-[18px] rounded-lg border border-[rgba(242,179,92,.3)] bg-[rgba(14,16,15,.96)] shadow-e2 jv-rise",
       },
-      onVolumeChange: function (v) {
-        store.set({ volume: v });
-      },
-    }),
-    h(OfflineOverlay, {
-      visible: s.offline,
-      onRetry: function () {
-        if (wsRef.current) wsRef.current.forceReconnect();
-      },
-    })
+      h(
+        "div",
+        { className: "flex items-center gap-[10px]" },
+        h("div", { className: "w-[7px] h-[7px] rounded-full bg-warn jv-blink" }),
+        h("div", { className: "text-[14px] font-semibold text-[#F7DCAE]" }, "jarvisd unreachable through the dashboard proxy")
+      ),
+      h(
+        "div",
+        { className: "mt-[9px] text-[13px] leading-[1.55] text-[#B7A98F]" },
+        "Voice capture is paused. Task state is safe in ",
+        h("span", { className: "font-mono" }, "jarvis.db"),
+        " and replays on reconnect. Retrying with backoff",
+        s.retryAttempt ? " — attempt " + s.retryAttempt + (retryIn != null ? ", next in " + retryIn + "s" : "") : "",
+        "."
+      ),
+      h(
+        "div",
+        { className: "mt-[14px] flex items-center gap-2" },
+        h(
+          "button",
+          {
+            onClick: props.onRetry,
+            "aria-label": "Retry now",
+            className:
+              "h-[34px] px-[15px] rounded-[7px] border border-[rgba(242,179,92,.4)] bg-[rgba(242,179,92,.14)] text-[#F7DCAE] text-[12px] font-semibold cursor-pointer hover:bg-[rgba(242,179,92,.22)]",
+          },
+          "Retry now"
+        ),
+        h(
+          "button",
+          {
+            onClick: function () {
+              store.set({ offlineDismissed: true });
+            },
+            "aria-label": "Continue offline",
+            className:
+              "h-[34px] px-[15px] rounded-[7px] border border-[rgba(120,190,200,.16)] bg-transparent text-dim text-[12px] cursor-pointer hover:text-text",
+          },
+          "Work offline"
+        ),
+        h("div", { className: "flex-1" }),
+        lastAgo ? h("div", { className: "text-[10px] font-mono text-[#6E6154]" }, "last event " + lastAgo + " ago") : null
+      )
+    )
   );
 }

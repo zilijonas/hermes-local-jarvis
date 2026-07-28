@@ -52,6 +52,14 @@ class Mediator:
         if len(self.pending_events) > 6:
             self.pending_events = self.pending_events[-6:]
 
+    def note_interrupted(self, user_text: str) -> None:
+        """Record a turn the user cut off, so the next turn has honest context
+        instead of a hole — makes 'as I was saying…' style continuity possible."""
+        self.history.append({"role": "user", "content": user_text})
+        self.history.append({"role": "assistant",
+                             "content": "[the user interrupted before I answered]"})
+        self.history = self.history[-2 * self.history_turns:]
+
     def component_status(self) -> dict[str, Any]:
         return {"ok": True, "detail": f"{self.model}, {len(self.history) // 2} turns held"}
 
@@ -142,7 +150,19 @@ class Mediator:
 
         spoken = spoken.strip()
         if not spoken and not cancel.is_set():
-            # Rare empty completion (Ollama under load) — never return silence.
+            # Empty completion (Ollama under load / model just evicted). Retry once
+            # silently — the reload usually succeeds — before admitting confusion.
+            try:
+                retry_buf = ""
+                async for delta in self._stream(msgs, cancel):
+                    retry_buf += delta
+                retry_buf = retry_buf.strip()
+                if retry_buf and not _JSON_LINE.match(retry_buf):
+                    spoken = retry_buf
+                    on_delta(spoken)
+            except Exception:
+                pass
+        if not spoken and not cancel.is_set():
             spoken = "Sorry, I lost my train of thought there. Could you say that again?"
             on_delta(spoken)
         if spoken:

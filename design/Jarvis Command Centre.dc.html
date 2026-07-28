@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+html,body{margin:0;padding:0;background:#070A0C;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#4FE3E0;text-decoration:none}
+a:hover{color:#8CF2EE}
+input,button,textarea{font:inherit;color:inherit}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:rgba(120,190,200,0.15);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+@keyframes jvBlink{0%,100%{opacity:1}50%{opacity:.22}}
+@keyframes jvSweep{0%{transform:translateX(-110%)}100%{transform:translateX(320%)}}
+@keyframes jvRise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){*{animation-duration:.001ms !important;transition-duration:.001ms !important}}
+</style>
+</helmet>
+
+<div ref="{{ rootRef }}" style="position:relative;height:100vh;width:100%;overflow:hidden;background:radial-gradient(120% 90% at 50% 0%,#0A1216 0%,#070A0C 55%,#05080A 100%);color:#E8F4F6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column">
+
+  <sc-if value="{{ showDesktop }}" hint-placeholder-val="{{ true }}">
+  <div style="position:absolute;inset:0;display:flex;flex-direction:column">
+
+    <div style="flex:none;height:52px;display:flex;align-items:center;gap:20px;padding:0 18px;border-bottom:1px solid rgba(120,190,200,0.10);background:linear-gradient(180deg,rgba(14,22,26,.9),rgba(8,12,14,.9))">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:8px;height:8px;border-radius:50%;background:#4FE3E0;box-shadow:0 0 12px 2px rgba(79,227,224,.5)"></div>
+        <div style="font-size:12px;letter-spacing:.36em;font-weight:600">JARVIS</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid rgba(120,190,200,.16);border-radius:4px;white-space:nowrap;flex:none">
+        <div style="font-size:9px;letter-spacing:.14em;color:#7FA0A5">LOCAL ONLY</div>
+        <div style="font-size:9px;color:#4FE3E0">◆</div>
+      </div>
+      <div style="width:1px;height:22px;background:rgba(120,190,200,.12)"></div>
+      <div style="display:flex;align-items:center;gap:22px;min-width:0;overflow:hidden">
+        <sc-if value="{{ showModelStats }}" hint-placeholder-val="{{ true }}">
+          <div style="flex:none;white-space:nowrap">
+            <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">MEDIATOR</div>
+            <div style="font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#B8CCD0;margin-top:2px">gemma4:e4b-it-qat</div>
+          </div>
+          <div style="flex:none;white-space:nowrap">
+            <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">WORKER</div>
+            <div style="font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#B8CCD0;margin-top:2px">granite4.1-local-64k</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ showE2EStat }}" hint-placeholder-val="{{ true }}">
+          <div style="flex:none;white-space:nowrap">
+            <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">E2E FIRST AUDIO</div>
+            <div style="font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#E8F4F6;margin-top:2px">{{ e2eLabel }}</div>
+          </div>
+        </sc-if>
+        <div style="flex:none;white-space:nowrap">
+          <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">RAM FREE</div>
+          <div style="font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#E8F4F6;margin-top:2px">{{ ramLabel }}</div>
+        </div>
+      </div>
+      <div style="flex:1"></div>
+      <div style="display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:999px;border:1px solid rgba(120,190,200,.14)" style-hover="{{ null }}">
+        <div style="{{ connDotStyle }}"></div>
+        <div style="font-size:11px;color:#C8DBDE;letter-spacing:.02em">{{ connLabel }}</div>
+      </div>
+      <button onClick="{{ toggleReduced }}" aria-label="Toggle reduced motion" style="{{ reducedBtnStyle }}">{{ reducedLabel }}</button>
+      <button onClick="{{ cycleView }}" aria-label="Switch preview layout" style="height:28px;padding:0 10px;border-radius:6px;border:1px solid rgba(120,190,200,.16);background:rgba(20,32,36,.6);color:#9FB6BA;font-size:10px;letter-spacing:.12em;cursor:pointer;white-space:nowrap;flex:none" style-hover="border-color:rgba(79,227,224,.45);color:#E8F4F6">{{ viewLabel }}</button>
+    </div>
+
+    <div style="{{ gridStyle }}">
+
+      <sc-if value="{{ showLeft }}" hint-placeholder-val="{{ true }}">
+      <div style="min-height:0;display:flex;flex-direction:column;border-right:1px solid rgba(120,190,200,.09);background:linear-gradient(180deg,rgba(10,16,19,.6),rgba(7,10,12,.2))">
+        <div style="flex:none;display:flex;align-items:center;gap:10px;padding:16px 16px 10px">
+          <div style="font-size:10px;letter-spacing:.2em;color:#6E858A;font-weight:600">MEMORY</div>
+          <div style="height:1px;flex:1;background:linear-gradient(90deg,rgba(120,190,200,.2),transparent)"></div>
+          <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#4FE3E0">{{ memCountLabel }}</div>
+        </div>
+        <div style="flex:none;padding:0 16px 12px">
+          <div style="display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:7px;border:1px solid rgba(120,190,200,.14);background:rgba(9,14,17,.8)" style-focus="border-color:rgba(79,227,224,.5)">
+            <div style="font-size:11px;color:#8FA3A8">⌕</div>
+            <input value="{{ memQuery }}" onChange="{{ onMemQuery }}" placeholder="Search vault…" aria-label="Search Obsidian memory" style="flex:1;min-width:0;background:transparent;border:0;outline:0;font-size:12px;color:#E8F4F6" />
+          </div>
+        </div>
+        <div style="flex:1;min-height:0;overflow-y:auto;padding:0 16px 16px;display:flex;flex-direction:column;gap:9px">
+          <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">RECALLED FOR THIS TURN</div>
+          <sc-if value="{{ memEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:16px 12px;border:1px dashed rgba(120,190,200,.14);border-radius:8px;font-size:12px;color:#8FA3A8;line-height:1.5">No recall this turn. Memory is queried only when the mediator calls <span style="font-family:ui-monospace,Menlo,monospace;color:#8FA3A8">memory_recall</span>.</div>
+          </sc-if>
+          <sc-for list="{{ memory }}" as="m" hint-placeholder-count="3">
+            <div style="{{ m.cardStyle }}">
+              <div style="display:flex;align-items:baseline;gap:8px">
+                <div style="flex:1;min-width:0;font-size:13px;font-weight:600;color:#E8F4F6;line-height:1.35;text-wrap:pretty">{{ m.title }}</div>
+                <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#4FE3E0">{{ m.scoreLabel }}</div>
+              </div>
+              <div style="margin-top:4px;font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.path }}</div>
+              <div style="margin-top:8px;height:2px;border-radius:2px;background:rgba(120,190,200,.12);overflow:hidden">
+                <div style="{{ m.barStyle }}"></div>
+              </div>
+              <div style="margin-top:9px;font-size:12px;color:#9FB6BA;line-height:1.5;text-wrap:pretty">{{ m.snippet }}</div>
+              <div style="margin-top:9px;display:flex;align-items:center;gap:8px">
+                <div style="font-size:10px;color:#8FA3A8">updated {{ m.updated }}</div>
+                <div style="flex:1"></div>
+                <sc-if value="{{ m.conflict }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:center;gap:5px;padding:2px 7px;border-radius:4px;border:1px solid rgba(242,179,92,.35);background:rgba(242,179,92,.08)">
+                    <div style="font-size:9px;color:#F2B35C">⚠</div>
+                    <div style="font-size:9px;letter-spacing:.1em;color:#F2B35C">CONFLICT</div>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="flex:none;padding:11px 16px;border-top:1px solid rgba(120,190,200,.09);display:flex;align-items:center;gap:8px">
+          <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8">88 notes · FTS5 + nomic-embed</div>
+          <div style="flex:1"></div>
+          <div style="font-size:10px;color:#8FA3A8">read-only</div>
+        </div>
+      </div>
+      </sc-if>
+
+      <div style="min-height:0;display:flex;flex-direction:column;position:relative">
+        <div style="flex:none;display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid rgba(120,190,200,.07)">
+          <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">TURN {{ turnIdLabel }}</div>
+          <div style="flex:1;display:flex;align-items:center;gap:3px;height:16px">
+            <sc-for list="{{ waterfall }}" as="w" hint-placeholder-count="4">
+              <div style="{{ w.segStyle }}" title="{{ w.title }}"></div>
+            </sc-for>
+          </div>
+          <sc-if value="{{ showWaterfallLabels }}" hint-placeholder-val="{{ true }}">
+            <sc-for list="{{ waterfall }}" as="w" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;gap:5px">
+                <div style="{{ w.dotStyle }}"></div>
+                <div style="font-size:10px;letter-spacing:.1em;color:#6E858A">{{ w.label }}</div>
+                <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#B8CCD0">{{ w.ms }}</div>
+              </div>
+            </sc-for>
+          </sc-if>
+          <sc-if value="{{ showWaterfallCompact }}" hint-placeholder-val="{{ false }}">
+            <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#B8CCD0">e2e {{ e2eLabel }}</div>
+          </sc-if>
+        </div>
+
+        <div style="flex:1.05;min-height:0;position:relative;display:flex;align-items:center;justify-content:center">
+          <canvas ref="{{ canvasRef }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;display:block"></canvas>
+          <div style="position:absolute;left:0;right:0;bottom:14px;display:flex;flex-direction:column;align-items:center;gap:7px;pointer-events:none">
+            <div style="display:flex;align-items:center;gap:9px">
+              <div style="{{ stateDotStyle }}"></div>
+              <div style="{{ stateLabelStyle }}">{{ stateLabel }}</div>
+            </div>
+            <div style="font-size:12px;color:#7FA0A5;letter-spacing:.02em">{{ stateHint }}</div>
+            <sc-if value="{{ hasToolChip }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top:3px;display:flex;align-items:center;gap:9px;padding:5px 11px;border-radius:6px;border:1px solid rgba(79,227,224,.28);background:rgba(12,26,29,.75);animation:jvRise .25s ease-out">
+                <div style="font-size:10px;color:#4FE3E0">⚙</div>
+                <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#D8ECEE">{{ toolName }}</div>
+                <div style="width:1px;height:11px;background:rgba(120,190,200,.2)"></div>
+                <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#4FE3E0">{{ toolElapsed }}</div>
+              </div>
+            </sc-if>
+          </div>
+          <div style="position:absolute;left:20px;top:16px;display:flex;flex-direction:column;gap:5px;pointer-events:none">
+            <div style="font-size:9px;letter-spacing:.16em;color:#6E858A">INTELLIGENCE CORE</div>
+            <div style="font-size:9px;letter-spacing:.16em;color:#6E858A">{{ coreModeLabel }}</div>
+          </div>
+        </div>
+
+        <div ref="{{ logRef }}" style="flex:1;min-height:132px;overflow-y:auto;padding:4px 22px 12px;display:flex;flex-direction:column;gap:14px;border-top:1px solid rgba(120,190,200,.07)">
+          <sc-for list="{{ turns }}" as="t" hint-placeholder-count="3">
+            <div style="display:grid;grid-template-columns:62px minmax(0,1fr);gap:14px;align-items:start">
+              <div style="display:flex;flex-direction:column;gap:3px;padding-top:2px">
+                <div style="{{ t.roleStyle }}">{{ t.roleLabel }}</div>
+                <div style="font-size:9px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ t.time }}</div>
+              </div>
+              <div style="min-width:0">
+                <div style="{{ t.textStyle }}">{{ t.text }}</div>
+                <sc-if value="{{ t.hasMeta }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">
+                    <sc-for list="{{ t.meta }}" as="mi" hint-placeholder-count="2">
+                      <div style="display:flex;align-items:center;gap:6px;padding:2px 7px;border-radius:4px;border:1px solid rgba(120,190,200,.14);background:rgba(14,22,26,.6);font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8">{{ mi }}</div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+          </sc-for>
+          <sc-if value="{{ hasPartial }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:62px minmax(0,1fr);gap:14px;align-items:start">
+              <div style="font-size:9px;letter-spacing:.14em;color:#4FE3E0;padding-top:2px;animation:jvBlink 1.4s ease-in-out infinite">YOU</div>
+              <div style="font-size:16px;line-height:1.5;color:#8FA3A8;font-style:italic;text-wrap:pretty">{{ partial }}<span style="display:inline-block;width:7px;height:16px;margin-left:3px;vertical-align:-2px;background:#4FE3E0;animation:jvBlink 1s steps(1) infinite"></span></div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ hasStreaming }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:62px minmax(0,1fr);gap:14px;align-items:start">
+              <div style="font-size:9px;letter-spacing:.14em;color:#C8DBDE;padding-top:2px">JARVIS</div>
+              <div style="font-size:16px;line-height:1.55;color:#E8F4F6;text-wrap:pretty">{{ streamDone }}<span style="{{ spokenStyle }}">{{ spokenNow }}</span><span style="color:#8FA3A8">{{ streamRest }}</span></div>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="flex:none;padding:12px 22px 16px;border-top:1px solid rgba(120,190,200,.09);background:linear-gradient(180deg,rgba(8,12,14,0),rgba(10,16,19,.7))">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="position:relative;width:52px;height:52px;flex:none">
+              <div ref="{{ micRingRef }}" style="position:absolute;inset:-6px;border-radius:50%;border:1px solid rgba(79,227,224,.5);opacity:0;transform:scale(.9)"></div>
+              <button onClick="{{ onMic }}" aria-label="{{ micAria }}" aria-pressed="{{ micActive }}" style="{{ micBtnStyle }}" style-hover="filter:brightness(1.14)" style-active="transform:scale(.96)">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3.5a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0v-5a3 3 0 0 0-3-3z"></path><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"></path><path d="M12 18v2.5"></path></svg>
+              </button>
+            </div>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:7px">
+              <div style="display:flex;align-items:center;gap:9px">
+                <div style="flex:1;min-width:0;display:flex;align-items:center;gap:9px;height:44px;padding:0 14px;border-radius:9px;border:1px solid rgba(120,190,200,.15);background:rgba(9,14,17,.85)" style-focus="border-color:rgba(79,227,224,.5)">
+                  <input value="{{ draft }}" onChange="{{ onDraft }}" onKeyDown="{{ onDraftKey }}" placeholder="Type to Jarvis, or hold Space to talk…" aria-label="Message Jarvis" style="flex:1;min-width:0;background:transparent;border:0;outline:0;font-size:14px;color:#E8F4F6" />
+                  <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">⌘K</div>
+                </div>
+                <button onClick="{{ onSend }}" aria-label="Send" style="height:44px;padding:0 18px;border-radius:9px;border:1px solid rgba(79,227,224,.3);background:rgba(79,227,224,.1);color:#9DF0EC;font-size:13px;font-weight:600;cursor:pointer" style-hover="background:rgba(79,227,224,.18);color:#E8F4F6">Send</button>
+                <button onClick="{{ onInterrupt }}" aria-label="Interrupt Jarvis" style="{{ interruptStyle }}" style-hover="filter:brightness(1.15)">Interrupt</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:14px">
+                <button onClick="{{ toggleMode }}" aria-label="Toggle voice mode" style="{{ modeBtnStyle }}" style-hover="border-color:rgba(79,227,224,.4)">{{ modeLabel }}</button>
+                <div style="flex:1;height:3px;border-radius:2px;background:rgba(120,190,200,.1);overflow:hidden">
+                  <div ref="{{ levelRef }}" style="height:100%;width:0%;border-radius:2px;background:linear-gradient(90deg,#1E7C7E,#4FE3E0)"></div>
+                </div>
+                <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">SPACE hold to talk · ESC interrupt · 1·2·3 panels</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="min-height:0;display:flex;flex-direction:column;border-left:1px solid rgba(120,190,200,.09);background:linear-gradient(180deg,rgba(10,16,19,.6),rgba(7,10,12,.2))">
+        <div style="flex:none;display:flex;align-items:center;gap:2px;padding:12px 14px 10px">
+          <sc-for list="{{ tabs }}" as="tb" hint-placeholder-count="3">
+            <button onClick="{{ tb.onClick }}" aria-label="{{ tb.aria }}" style="{{ tb.style }}" style-hover="color:#E8F4F6">{{ tb.label }}<span style="{{ tb.badgeStyle }}">{{ tb.badge }}</span></button>
+          </sc-for>
+        </div>
+
+        <div style="flex:1;min-height:0;overflow-y:auto;padding:2px 14px 14px;display:flex;flex-direction:column;gap:9px">
+          <sc-if value="{{ tabWork }}" hint-placeholder-val="{{ true }}">
+            <sc-for list="{{ tasks }}" as="k" hint-placeholder-count="3">
+              <div style="{{ k.cardStyle }}">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="{{ k.chipStyle }}">{{ k.statusLabel }}</div>
+                  <div style="flex:1"></div>
+                  <div style="{{ k.workerStyle }}">{{ k.worker }}</div>
+                  <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ k.elapsed }}</div>
+                </div>
+                <div style="margin-top:8px;font-size:13px;font-weight:600;line-height:1.4;color:#E8F4F6;text-wrap:pretty">{{ k.title }}</div>
+                <sc-if value="{{ k.hasBar }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:9px;height:2px;border-radius:2px;background:rgba(120,190,200,.1);overflow:hidden;position:relative">
+                    <div style="{{ k.barStyle }}"></div>
+                  </div>
+                </sc-if>
+                <div style="margin-top:8px;font-size:12px;line-height:1.5;color:#9FB6BA;text-wrap:pretty">{{ k.note }}</div>
+                <div style="margin-top:10px;display:flex;align-items:center;gap:6px">
+                  <sc-for list="{{ k.actions }}" as="a" hint-placeholder-count="2">
+                    <button onClick="{{ a.onClick }}" aria-label="{{ a.aria }}" style="{{ a.style }}" style-hover="filter:brightness(1.2)">{{ a.label }}</button>
+                  </sc-for>
+                  <div style="flex:1"></div>
+                  <button onClick="{{ k.onToggle }}" aria-label="Toggle task detail" style="height:26px;padding:0 9px;border-radius:5px;border:1px solid rgba(120,190,200,.14);background:transparent;color:#8FA3A8;font-size:10px;letter-spacing:.06em;cursor:pointer" style-hover="color:#E8F4F6;border-color:rgba(79,227,224,.35)">{{ k.toggleLabel }}</button>
+                </div>
+                <sc-if value="{{ k.expanded }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:11px;padding-top:11px;border-top:1px solid rgba(120,190,200,.1);display:flex;flex-direction:column;gap:8px">
+                    <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">EVENT TIMELINE</div>
+                    <sc-for list="{{ k.events }}" as="ev" hint-placeholder-count="3">
+                      <div style="display:grid;grid-template-columns:52px 10px minmax(0,1fr);gap:8px;align-items:start">
+                        <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ ev.ts }}</div>
+                        <div style="{{ ev.dotStyle }}"></div>
+                        <div style="font-size:11px;line-height:1.45;color:#9FB6BA;text-wrap:pretty">{{ ev.label }}</div>
+                      </div>
+                    </sc-for>
+                    <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8;margin-top:2px">SESSION</div>
+                    <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8;word-break:break-all">{{ k.session }}</div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </sc-if>
+
+          <sc-if value="{{ tabActivity }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:8px;padding:2px 2px 6px">
+              <button onClick="{{ toggleVerbose }}" aria-label="Toggle trace detail" style="{{ verboseStyle }}" style-hover="border-color:rgba(79,227,224,.4)">{{ verboseLabel }}</button>
+              <div style="flex:1"></div>
+              <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ activityCountLabel }}</div>
+            </div>
+            <sc-for list="{{ activity }}" as="e" hint-placeholder-count="6">
+              <div style="{{ e.rowStyle }}">
+                <div style="display:grid;grid-template-columns:56px 14px minmax(0,1fr);gap:9px;align-items:start">
+                  <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A;padding-top:1px">{{ e.ts }}</div>
+                  <div style="{{ e.iconStyle }}">{{ e.icon }}</div>
+                  <div style="min-width:0">
+                    <div style="font-size:12px;line-height:1.45;color:#C8DBDE;text-wrap:pretty">{{ e.label }}</div>
+                    <sc-if value="{{ e.showDetail }}" hint-placeholder-val="{{ false }}">
+                      <div style="margin-top:5px;padding:7px 9px;border-radius:5px;background:rgba(6,10,12,.7);border:1px solid rgba(120,190,200,.1);font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8;line-height:1.55;white-space:pre-wrap;word-break:break-word">{{ e.detail }}</div>
+                    </sc-if>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </sc-if>
+
+          <sc-if value="{{ tabMemory }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:7px;border:1px solid rgba(120,190,200,.14);background:rgba(9,14,17,.8)">
+              <div style="font-size:11px;color:#8FA3A8">⌕</div>
+              <input value="{{ memQuery }}" onChange="{{ onMemQuery }}" placeholder="Search vault…" aria-label="Search Obsidian memory" style="flex:1;min-width:0;background:transparent;border:0;outline:0;font-size:12px;color:#E8F4F6" />
+            </div>
+            <sc-if value="{{ memEmpty }}" hint-placeholder-val="{{ false }}">
+              <div style="padding:16px 12px;border:1px dashed rgba(120,190,200,.14);border-radius:8px;font-size:12px;color:#8FA3A8;line-height:1.5">No recall this turn. Memory is queried only when the mediator calls <span style="font-family:ui-monospace,Menlo,monospace;color:#8FA3A8">memory_recall</span>.</div>
+            </sc-if>
+            <sc-for list="{{ memory }}" as="m" hint-placeholder-count="3">
+              <div style="{{ m.cardStyle }}">
+                <div style="display:flex;align-items:baseline;gap:8px">
+                  <div style="flex:1;min-width:0;font-size:13px;font-weight:600;color:#E8F4F6;line-height:1.35;text-wrap:pretty">{{ m.title }}</div>
+                  <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#4FE3E0">{{ m.scoreLabel }}</div>
+                </div>
+                <div style="margin-top:4px;font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.path }}</div>
+                <div style="margin-top:8px;height:2px;border-radius:2px;background:rgba(120,190,200,.12);overflow:hidden">
+                  <div style="{{ m.barStyle }}"></div>
+                </div>
+                <div style="margin-top:9px;font-size:12px;color:#9FB6BA;line-height:1.5;text-wrap:pretty">{{ m.snippet }}</div>
+                <div style="margin-top:9px;display:flex;align-items:center;gap:8px">
+                  <div style="font-size:10px;color:#8FA3A8">updated {{ m.updated }}</div>
+                  <div style="flex:1"></div>
+                  <sc-if value="{{ m.conflict }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;align-items:center;gap:5px;padding:2px 7px;border-radius:4px;border:1px solid rgba(242,179,92,.35);background:rgba(242,179,92,.08)">
+                      <div style="font-size:9px;color:#F2B35C">⚠</div>
+                      <div style="font-size:9px;letter-spacing:.1em;color:#F2B35C">CONFLICT</div>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-for>
+          </sc-if>
+
+          <sc-if value="{{ tabSystem }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:9px">
+              <div style="padding:13px;border-radius:9px;border:1px solid rgba(120,190,200,.11);background:rgba(11,17,20,.7)">
+                <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">COMPONENT HEALTH</div>
+                <div style="margin-top:10px;display:flex;flex-direction:column;gap:7px">
+                  <sc-for list="{{ health }}" as="hc" hint-placeholder-count="5">
+                    <div style="display:flex;align-items:center;gap:9px">
+                      <div style="{{ hc.dotStyle }}"></div>
+                      <div style="font-size:12px;color:#C8DBDE;width:76px">{{ hc.name }}</div>
+                      <div style="flex:1;min-width:0;font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#6E858A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ hc.detail }}</div>
+                      <div style="{{ hc.tagStyle }}">{{ hc.tag }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="padding:13px;border-radius:9px;border:1px solid rgba(120,190,200,.11);background:rgba(11,17,20,.7)">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">LATENCY · LAST 20 TURNS</div>
+                  <div style="flex:1"></div>
+                  <div style="font-size:9px;letter-spacing:.1em;color:#6E858A">p50 / p95</div>
+                </div>
+                <div style="margin-top:11px;display:flex;flex-direction:column;gap:11px">
+                  <sc-for list="{{ latency }}" as="l" hint-placeholder-count="4">
+                    <div>
+                      <div style="display:flex;align-items:baseline;gap:8px">
+                        <div style="font-size:11px;color:#C8DBDE;flex:1">{{ l.stage }}</div>
+                        <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#E8F4F6">{{ l.p50 }}</div>
+                        <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8">{{ l.p95 }}</div>
+                      </div>
+                      <svg viewBox="0 0 100 18" preserveAspectRatio="none" style="display:block;width:100%;height:18px;margin-top:5px;overflow:visible" aria-hidden="true">
+                        <polyline points="{{ l.points }}" fill="none" stroke="{{ l.stroke }}" stroke-width="1.1" vector-effect="non-scaling-stroke"></polyline>
+                        <line x1="0" y1="17.5" x2="100" y2="17.5" stroke="rgba(120,190,200,0.1)" stroke-width="1" vector-effect="non-scaling-stroke"></line>
+                      </svg>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="padding:13px;border-radius:9px;border:1px solid rgba(120,190,200,.11);background:rgba(11,17,20,.7)">
+                <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">RESIDENCY & MEMORY</div>
+                <div style="margin-top:11px;display:flex;flex-direction:column;gap:9px">
+                  <div style="display:flex;align-items:center;gap:9px">
+                    <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#C8DBDE;flex:1">gemma4:e4b-it-qat</div>
+                    <div style="font-size:10px;letter-spacing:.08em;color:#4FE3E0">RESIDENT</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:9px">
+                    <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#C8DBDE;flex:1">granite4.1-local-64k</div>
+                    <div style="{{ workerResidencyStyle }}">{{ workerResidency }}</div>
+                  </div>
+                  <div style="margin-top:2px">
+                    <div style="display:flex;align-items:baseline;gap:8px">
+                      <div style="font-size:11px;color:#C8DBDE;flex:1">Unified memory</div>
+                      <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#E8F4F6">{{ ramLabel }} free / 24 GB</div>
+                    </div>
+                    <div style="margin-top:6px;height:4px;border-radius:2px;background:rgba(120,190,200,.1);overflow:hidden">
+                      <div style="{{ ramBarStyle }}"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">
+                <div style="padding:12px 13px;border-radius:9px;border:1px solid rgba(120,190,200,.11);background:rgba(11,17,20,.7)">
+                  <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">BARGE-INS</div>
+                  <div style="margin-top:7px;font-size:22px;font-weight:600;font-family:ui-monospace,Menlo,monospace;color:#E8F4F6">{{ bargeIns }}</div>
+                  <div style="margin-top:3px;font-size:10px;color:#8FA3A8">this session</div>
+                </div>
+                <div style="padding:12px 13px;border-radius:9px;border:1px solid rgba(120,190,200,.11);background:rgba(11,17,20,.7)">
+                  <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">ERRORS</div>
+                  <div style="margin-top:7px;font-size:22px;font-weight:600;font-family:ui-monospace,Menlo,monospace;color:#E8F4F6">{{ errCount }}</div>
+                  <div style="margin-top:3px;font-size:10px;color:#8FA3A8">recoverable</div>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+
+        <sc-if value="{{ showControls }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:none;border-top:1px solid rgba(120,190,200,.09);padding:10px 14px 12px;background:#080C0E">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="font-size:9px;letter-spacing:.14em;color:#6E858A">PROTOTYPE · SIMULATED jarvisd FEED</div>
+            <div style="flex:1"></div>
+            <button onClick="{{ runTurn }}" aria-label="Play a full turn" style="height:26px;padding:0 11px;border-radius:5px;border:1px solid rgba(79,227,224,.32);background:rgba(79,227,224,.12);color:#9DF0EC;font-size:10px;letter-spacing:.08em;cursor:pointer" style-hover="background:rgba(79,227,224,.2)">▶ RUN TURN</button>
+          </div>
+          <div style="margin-top:9px;display:flex;flex-wrap:wrap;gap:5px">
+            <sc-for list="{{ statePills }}" as="p" hint-placeholder-count="8">
+              <button onClick="{{ p.onClick }}" aria-label="{{ p.aria }}" style="{{ p.style }}" style-hover="color:#E8F4F6;border-color:rgba(79,227,224,.35)">{{ p.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+        </sc-if>
+      </div>
+    </div>
+
+    <sc-if value="{{ offline }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:120px;background:linear-gradient(180deg,rgba(5,8,10,.1),rgba(5,8,10,.72));backdrop-filter:blur(1.5px)">
+        <div style="width:min(520px,86%);padding:18px 20px;border-radius:12px;border:1px solid rgba(242,179,92,.3);background:rgba(14,16,15,.96);box-shadow:0 24px 60px rgba(0,0,0,.6)">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:7px;height:7px;border-radius:50%;background:#F2B35C;animation:jvBlink 1.2s ease-in-out infinite"></div>
+            <div style="font-size:14px;font-weight:600;color:#F7DCAE">jarvisd unreachable through the dashboard proxy</div>
+          </div>
+          <div style="margin-top:9px;font-size:13px;line-height:1.55;color:#B7A98F">Voice capture is paused. Task state is safe in <span style="font-family:ui-monospace,Menlo,monospace">jarvis.db</span> and replays on reconnect. Retrying with backoff — attempt {{ retryAttempt }}, next in {{ retryIn }}.</div>
+          <div style="margin-top:14px;display:flex;align-items:center;gap:8px">
+            <button onClick="{{ onRetry }}" aria-label="Retry now" style="height:34px;padding:0 15px;border-radius:7px;border:1px solid rgba(242,179,92,.4);background:rgba(242,179,92,.14);color:#F7DCAE;font-size:12px;font-weight:600;cursor:pointer" style-hover="background:rgba(242,179,92,.22)">Retry now</button>
+            <button onClick="{{ onDismissOffline }}" aria-label="Continue offline" style="height:34px;padding:0 15px;border-radius:7px;border:1px solid rgba(120,190,200,.16);background:transparent;color:#9FB6BA;font-size:12px;cursor:pointer" style-hover="color:#E8F4F6">Work offline</button>
+            <div style="flex:1"></div>
+            <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E6154">last event {{ lastEventAgo }} ago</div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ showMobile }}" hint-placeholder-val="{{ false }}">
+  <div style="{{ mobileWrapStyle }}">
+    <div style="{{ phoneStyle }}">
+
+      <div style="flex:none;display:flex;align-items:center;gap:9px;padding:14px 16px 10px">
+        <div style="width:7px;height:7px;border-radius:50%;background:#4FE3E0;box-shadow:0 0 10px 2px rgba(79,227,224,.5)"></div>
+        <div style="font-size:11px;letter-spacing:.3em;font-weight:600">JARVIS</div>
+        <div style="flex:1"></div>
+        <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ ramLabel }}</div>
+        <div style="{{ connDotStyle }}"></div>
+      </div>
+
+      <div style="flex:0 1 232px;min-height:120px;position:relative">
+        <canvas ref="{{ mCanvasRef }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;display:block"></canvas>
+        <div style="position:absolute;left:0;right:0;bottom:4px;display:flex;flex-direction:column;align-items:center;gap:5px;pointer-events:none">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="{{ stateDotStyle }}"></div>
+            <div style="{{ stateLabelStyle }}">{{ stateLabel }}</div>
+          </div>
+          <div style="font-size:11px;color:#7FA0A5">{{ stateHint }}</div>
+        </div>
+      </div>
+
+      <sc-if value="{{ hasActiveTask }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:none;margin:2px 12px 0;padding:10px 12px;border-radius:9px;border:1px solid rgba(79,227,224,.2);background:rgba(12,26,29,.6)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="{{ activeTask.chipStyle }}">{{ activeTask.statusLabel }}</div>
+            <div style="flex:1"></div>
+            <div style="{{ activeTask.workerStyle }}">{{ activeTask.worker }}</div>
+            <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ activeTask.elapsed }}</div>
+          </div>
+          <div style="margin-top:6px;font-size:12px;font-weight:600;line-height:1.4;color:#E8F4F6">{{ activeTask.title }}</div>
+          <div style="margin-top:5px;font-size:11px;line-height:1.45;color:#9FB6BA">{{ activeTask.note }}</div>
+        </div>
+      </sc-if>
+
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:12px 16px 8px;display:flex;flex-direction:column;gap:12px">
+        <sc-for list="{{ turns }}" as="t" hint-placeholder-count="2">
+          <div>
+            <div style="{{ t.roleStyle }}">{{ t.roleLabel }}</div>
+            <div style="{{ t.textStyleMobile }}">{{ t.text }}</div>
+          </div>
+        </sc-for>
+        <sc-if value="{{ hasPartial }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div style="font-size:9px;letter-spacing:.14em;color:#4FE3E0;animation:jvBlink 1.4s ease-in-out infinite">YOU</div>
+            <div style="margin-top:4px;font-size:15px;line-height:1.5;color:#8FA3A8;font-style:italic">{{ partial }}</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ hasStreaming }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div style="font-size:9px;letter-spacing:.14em;color:#C8DBDE">JARVIS</div>
+            <div style="margin-top:4px;font-size:15px;line-height:1.55;color:#E8F4F6">{{ streamDone }}<span style="{{ spokenStyle }}">{{ spokenNow }}</span><span style="color:#8FA3A8">{{ streamRest }}</span></div>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="flex:none;padding:8px 12px calc(12px + env(safe-area-inset-bottom));border-top:1px solid rgba(120,190,200,.1);background:rgba(8,12,14,.9)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <sc-for list="{{ sheetTabs }}" as="sb" hint-placeholder-count="3">
+            <button onClick="{{ sb.onClick }}" aria-label="{{ sb.aria }}" style="{{ sb.style }}">{{ sb.label }}<span style="{{ sb.badgeStyle }}">{{ sb.badge }}</span></button>
+          </sc-for>
+        </div>
+        <div style="margin-top:10px;display:flex;align-items:center;gap:10px">
+          <div style="flex:1;min-width:0;display:flex;align-items:center;height:46px;padding:0 14px;border-radius:23px;border:1px solid rgba(120,190,200,.16);background:rgba(9,14,17,.85)">
+            <input value="{{ draft }}" onChange="{{ onDraft }}" onKeyDown="{{ onDraftKey }}" placeholder="Message Jarvis…" aria-label="Message Jarvis" style="flex:1;min-width:0;background:transparent;border:0;outline:0;font-size:15px;color:#E8F4F6" />
+          </div>
+          <button onClick="{{ onInterrupt }}" aria-label="Interrupt Jarvis" style="{{ interruptStyleMobile }}">■</button>
+          <div style="position:relative;width:64px;height:64px;flex:none">
+            <div ref="{{ mMicRingRef }}" style="position:absolute;inset:-7px;border-radius:50%;border:1px solid rgba(79,227,224,.5);opacity:0;transform:scale(.9)"></div>
+            <button onClick="{{ onMic }}" aria-label="{{ micAria }}" aria-pressed="{{ micActive }}" style="{{ micBtnStyleMobile }}" style-active="transform:scale(.95)">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3.5a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0v-5a3 3 0 0 0-3-3z"></path><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"></path><path d="M12 18v2.5"></path></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(4,7,9,.6)">
+          <div onClick="{{ closeSheet }}" style="flex:1"></div>
+          <div style="flex:none;max-height:72%;display:flex;flex-direction:column;border-radius:18px 18px 0 0;border-top:1px solid rgba(120,190,200,.16);background:#0B1114;box-shadow:0 -20px 60px rgba(0,0,0,.6);animation:jvRise .22s ease-out">
+            <div style="flex:none;display:flex;flex-direction:column;align-items:center;padding:9px 0 4px">
+              <div style="width:38px;height:4px;border-radius:2px;background:rgba(120,190,200,.24)"></div>
+            </div>
+            <div style="flex:none;display:flex;align-items:center;gap:10px;padding:6px 16px 10px">
+              <div style="font-size:11px;letter-spacing:.18em;color:#9FB6BA;font-weight:600">{{ sheetTitle }}</div>
+              <div style="flex:1"></div>
+              <button onClick="{{ closeSheet }}" aria-label="Close panel" style="width:30px;height:30px;border-radius:15px;border:1px solid rgba(120,190,200,.16);background:transparent;color:#9FB6BA;font-size:14px;cursor:pointer">×</button>
+            </div>
+            <div style="flex:1;min-height:0;overflow-y:auto;padding:0 14px calc(16px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:9px">
+              <sc-if value="{{ sheetIsTasks }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ tasks }}" as="k" hint-placeholder-count="3">
+                  <div style="{{ k.cardStyle }}">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <div style="{{ k.chipStyle }}">{{ k.statusLabel }}</div>
+                      <div style="flex:1"></div>
+                      <div style="{{ k.workerStyle }}">{{ k.worker }}</div>
+                      <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ k.elapsed }}</div>
+                    </div>
+                    <div style="margin-top:8px;font-size:14px;font-weight:600;line-height:1.4;color:#E8F4F6">{{ k.title }}</div>
+                    <div style="margin-top:6px;font-size:13px;line-height:1.5;color:#9FB6BA">{{ k.note }}</div>
+                    <div style="margin-top:11px;display:flex;align-items:center;gap:7px">
+                      <sc-for list="{{ k.actionsMobile }}" as="a" hint-placeholder-count="2">
+                        <button onClick="{{ a.onClick }}" aria-label="{{ a.aria }}" style="{{ a.style }}">{{ a.label }}</button>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-for>
+              </sc-if>
+              <sc-if value="{{ sheetIsMemory }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ memory }}" as="m" hint-placeholder-count="3">
+                  <div style="{{ m.cardStyle }}">
+                    <div style="display:flex;align-items:baseline;gap:8px">
+                      <div style="flex:1;min-width:0;font-size:14px;font-weight:600;color:#E8F4F6;line-height:1.35">{{ m.title }}</div>
+                      <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#4FE3E0">{{ m.scoreLabel }}</div>
+                    </div>
+                    <div style="margin-top:4px;font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8">{{ m.path }}</div>
+                    <div style="margin-top:8px;font-size:13px;color:#9FB6BA;line-height:1.5">{{ m.snippet }}</div>
+                  </div>
+                </sc-for>
+              </sc-if>
+              <sc-if value="{{ sheetIsActivity }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ activity }}" as="e" hint-placeholder-count="6">
+                  <div style="display:grid;grid-template-columns:52px 14px minmax(0,1fr);gap:9px;align-items:start;padding:2px 0">
+                    <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A;padding-top:2px">{{ e.ts }}</div>
+                    <div style="{{ e.iconStyle }}">{{ e.icon }}</div>
+                    <div style="font-size:13px;line-height:1.45;color:#C8DBDE">{{ e.label }}</div>
+                  </div>
+                </sc-for>
+              </sc-if>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ showPhoneChrome }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:none;display:flex;flex-direction:column;align-items:center;gap:10px">
+        <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:5px;max-width:560px">
+          <sc-for list="{{ statePills }}" as="p" hint-placeholder-count="8">
+            <button onClick="{{ p.onClick }}" aria-label="{{ p.aria }}" style="{{ p.style }}">{{ p.label }}</button>
+          </sc-for>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onClick="{{ runTurn }}" aria-label="Play a full turn" style="height:26px;padding:0 11px;border-radius:5px;border:1px solid rgba(79,227,224,.32);background:rgba(79,227,224,.12);color:#9DF0EC;font-size:10px;letter-spacing:.08em;cursor:pointer">▶ RUN TURN</button>
+          <button onClick="{{ cycleView }}" aria-label="Switch preview layout" style="height:26px;padding:0 11px;border-radius:5px;border:1px solid rgba(120,190,200,.16);background:transparent;color:#9FB6BA;font-size:10px;letter-spacing:.1em;cursor:pointer">{{ viewLabel }}</button>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1512,&quot;height&quot;:950},&quot;startState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;idle&quot;,&quot;listening&quot;,&quot;transcribing&quot;,&quot;thinking&quot;,&quot;memory&quot;,&quot;capability&quot;,&quot;tool&quot;,&quot;delegating&quot;,&quot;worker_progress&quot;,&quot;speaking&quot;,&quot;interrupted&quot;,&quot;blocked&quot;,&quot;error&quot;,&quot;done&quot;,&quot;offline&quot;],&quot;default&quot;:&quot;idle&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;motion&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;full&quot;,&quot;reduced&quot;],&quot;default&quot;:&quot;full&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;coreDetail&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;rich&quot;,&quot;calm&quot;],&quot;default&quot;:&quot;rich&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Intelligence core&quot;},&quot;showPrototypeControls&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;}}">
+class Component extends DCLogic {
+  rootRef = React.createRef();
+  canvasRef = React.createRef();
+  mCanvasRef = React.createRef();
+  micRingRef = React.createRef();
+  mMicRingRef = React.createRef();
+  levelRef = React.createRef();
+  logRef = React.createRef();
+
+  C = {
+    cyan: "#4FE3E0", cyanSoft: "#9DF0EC", amber: "#F2B35C", red: "#FF6B6B",
+    text: "#E8F4F6", dim: "#9FB6BA", faint: "#6E858A", ghost: "#6E858A",
+    line: "rgba(120,190,200,0.12)", mono: "ui-monospace,SFMono-Regular,Menlo,monospace",
+  };
+
+  CORE = {
+    idle:            { rad: 1.00, spin: 0.05, noise: 0.10, glow: 0.55, mode: "calm",    col: [79, 227, 224] },
+    listening:       { rad: 1.09, spin: 0.09, noise: 0.16, glow: 0.88, mode: "open",    col: [110, 235, 225] },
+    transcribing:    { rad: 1.02, spin: 0.15, noise: 0.30, glow: 0.76, mode: "resolve", col: [130, 226, 236] },
+    thinking:        { rad: 0.93, spin: 0.24, noise: 0.13, glow: 0.70, mode: "orbit",   col: [79, 210, 232] },
+    memory:          { rad: 1.00, spin: 0.07, noise: 0.09, glow: 0.78, mode: "stars",   col: [96, 216, 206] },
+    capability:      { rad: 0.97, spin: 0.12, noise: 0.09, glow: 0.72, mode: "radial",  col: [122, 222, 216] },
+    tool:            { rad: 0.95, spin: 0.19, noise: 0.12, glow: 0.80, mode: "arc",     col: [79, 227, 224] },
+    delegating:      { rad: 1.03, spin: 0.10, noise: 0.14, glow: 0.84, mode: "transfer",col: [86, 206, 234] },
+    worker_progress: { rad: 0.91, spin: 0.06, noise: 0.07, glow: 0.58, mode: "arc",     col: [86, 206, 234] },
+    speaking:        { rad: 1.05, spin: 0.07, noise: 0.10, glow: 1.00, mode: "bands",   col: [124, 240, 233] },
+    interrupted:     { rad: 0.87, spin: 0.03, noise: 0.05, glow: 0.34, mode: "calm",    col: [150, 170, 176] },
+    blocked:         { rad: 0.95, spin: 0.03, noise: 0.06, glow: 0.62, mode: "calm",    col: [242, 179, 92] },
+    error:           { rad: 0.90, spin: 0.02, noise: 0.36, glow: 0.66, mode: "calm",    col: [255, 107, 107] },
+    done:            { rad: 1.10, spin: 0.05, noise: 0.08, glow: 0.92, mode: "pulse",   col: [104, 234, 208] },
+    offline:         { rad: 0.85, spin: 0.01, noise: 0.04, glow: 0.20, mode: "calm",    col: [110, 128, 133] },
+  };
+
+  META = {
+    idle:            { label: "Idle",              hint: "Awake · nothing in flight" },
+    listening:       { label: "Listening",         hint: "mic open · webrtcvad endpointing" },
+    transcribing:    { label: "Transcribing",      hint: "faster-whisper base.en int8" },
+    thinking:        { label: "Thinking",          hint: "gemma4:e4b-it-qat · 8k ctx" },
+    memory:          { label: "Recalling",         hint: "Obsidian vault · FTS5 + vectors" },
+    capability:      { label: "Matching capability", hint: "tools · skills · quick actions" },
+    tool:            { label: "Running meta-tool", hint: "server-reported action" },
+    delegating:      { label: "Delegating",        hint: "handing the goal to a worker" },
+    worker_progress: { label: "Worker running",    hint: "granite4.1-local-64k session" },
+    speaking:        { label: "Speaking",          hint: "kokoro-onnx · am_michael" },
+    interrupted:     { label: "Interrupted",       hint: "playback stopped · mediator canceled" },
+    blocked:         { label: "Blocked",           hint: "needs a decision from you" },
+    error:           { label: "Error",             hint: "recoverable · see activity" },
+    done:            { label: "Done",              hint: "turn complete" },
+    offline:         { label: "Offline",           hint: "reconnecting to jarvisd" },
+  };
+
+  state = {
+    fsm: (this.props || {}).startState || "idle", detail: null, view: "auto", w: 1440, reduced: (this.props || {}).motion === "reduced",
+    conn: "open", offline: false, retryAttempt: 1, retryIn: "2s", lastEventAgo: "4s",
+    micActive: false, micMode: "ptt", draft: "", memQuery: "",
+    partial: "", stream: "", streamFull: "", spokenIdx: -1, sentences: [],
+    tab: "work", verbose: false, sheet: null, expandedTask: null,
+    toolName: null, toolStart: 0, tick: 0,
+    turns: [
+      { id: "t-101", role: "system", text: "Session resumed · 2 open tasks replayed from jarvis.db", time: "09:02:14" },
+      { id: "t-102", role: "user", text: "Where did I leave the vault index refresh?", time: "09:02:31" },
+      { id: "t-103", role: "jarvis", text: "It stopped when jarvisd restarted last night. The Granite worker process was lost, so I marked it needs-review rather than done — nothing was written to the vault.", time: "09:02:33", meta: ["task_status · 41 ms", "memory_recall · 2 hits"] },
+    ],
+    tasks: [
+      { id: "tk_9f31", title: "Refresh vault index and reconcile 12 changed notes", status: "running", kind: "granite", note: "Embedding batch 7/12 · nomic-embed-text", started: 214, bar: 0.58, session: "sess_01JQ8Z2W-granite-jarvis-voice", events: [ { ts: "09:03:02", label: "delegate_task accepted → queued", tone: "cyan" }, { ts: "09:03:04", label: "hermes -p jarvis-voice -z … -t vault,fs", tone: "dim" }, { ts: "09:04:11", label: "progress: 12 changed notes detected", tone: "dim" }, { ts: "09:06:36", label: "progress: embedding batch 7/12", tone: "cyan" } ] },
+      { id: "tk_8c07", title: "Run `sleep 25` in the terminal", status: "needs_review", kind: "granite", note: "jarvisd restarted; worker process lost. Output may be incomplete — re-delegate to confirm.", started: 1880, bar: 0, session: "sess_01JQ7YKM-granite-jarvis-voice", events: [ { ts: "08:31:10", label: "delegate_task accepted → running", tone: "cyan" }, { ts: "08:33:02", label: "jarvisd restart · pid 4412 orphaned", tone: "amber" }, { ts: "08:33:03", label: "validation: no final text → needs_review", tone: "amber" } ] },
+      { id: "tk_7b52", title: "Create /tmp/jarvis-itest.txt with `itest-ok`", status: "done", kind: "granite", note: "File exists at /private/tmp/jarvis-itest.txt · artifact check passed.", started: 5240, bar: 1, session: "sess_01JQ6RTP-granite-jarvis-voice", events: [ { ts: "07:58:41", label: "delegate_task accepted → running", tone: "cyan" }, { ts: "07:59:02", label: "artifact check: path exists, 9 bytes", tone: "cyan" }, { ts: "07:59:02", label: "validated → done", tone: "cyan" } ] },
+      { id: "tk_6a18", title: "Summarise yesterday's meeting notes", status: "queued", kind: "codex", note: "Waiting on worker availability gate (codex-task.sh status).", started: 12, bar: 0, session: "—", events: [ { ts: "09:06:44", label: "queued · availability gate pending", tone: "dim" } ] },
+    ],
+    memory: [],
+    activity: [
+      { id: "a1", ts: "09:02:33", icon: "▣", label: "Mediator replied · 118 tokens", detail: "ms_first_token: 612\nms_total: 2140", tone: "dim" },
+      { id: "a2", ts: "09:02:32", icon: "⚙", label: "task_status(latest) → 1 needs_review, 1 running", detail: "args: {\"task_id\": \"\"}\nms: 41", tone: "cyan" },
+      { id: "a3", ts: "09:02:31", icon: "▤", label: "Transcribed: “Where did I leave the vault index refresh?”", detail: "stt.final ms: 380", tone: "dim" },
+      { id: "a4", ts: "09:02:14", icon: "♥", label: "Health changed · granite4.1 evicted from residency", detail: "components.ollama.ok: true\nmodels.worker.resident: false", tone: "amber" },
+      { id: "a5", ts: "08:33:03", icon: "✕", label: "Worker process lost on jarvisd restart · tk_8c07 → needs_review", detail: "recoverable: true\nvalidation: {\"final_text\": null, \"exit_code\": null}", tone: "red" },
+    ],
+    latency: { stt: [340, 402, 366, 388, 352, 371, 380], mediator_first_token: [690, 604, 655, 720, 612, 588, 612], tts_first_chunk: [268, 291, 254, 274, 262, 258, 266], e2e_first_audio: [1480, 1392, 1441, 1560, 1402, 1368, 1420] },
+    bargeIns: 3, errCount: 1, workerResident: false, ramFree: 9.4,
+  };
+
+  // ---------- lifecycle ----------
+  componentDidMount() {
+    this._amp = 0; this._mic = 0; this._p = null; this._ripples = []; this._t0 = performance.now();
+    this._buildGeometry();
+    this._onResize = () => {
+      const w = this.rootRef.current ? this.rootRef.current.clientWidth : window.innerWidth;
+      if (Math.abs(w - this.state.w) > 4) this.setState({ w });
+      this._sizeCanvas();
+    };
+    this._onResize();
+    this._ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(this._onResize) : null;
+    if (this._ro && this.rootRef.current) this._ro.observe(this.rootRef.current);
+    window.addEventListener("resize", this._onResize);
+
+    this._onKey = (e) => {
+      const typing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
+      if (e.code === "Space" && !typing) { e.preventDefault(); if (!e.repeat) this.startMic(); return; }
+      if (e.key === "Escape") { this.onInterrupt(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); const i = this.rootRef.current && this.rootRef.current.querySelector("input"); if (i) i.focus(); return; }
+      if (!typing && ["1", "2", "3"].indexOf(e.key) >= 0) this.setState({ tab: ["work", "activity", "system"][+e.key - 1] });
+    };
+    this._onKeyUp = (e) => { if (e.code === "Space") { const typing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA"); if (!typing) { e.preventDefault(); this.stopMic(); } } };
+    window.addEventListener("keydown", this._onKey);
+    window.addEventListener("keyup", this._onKeyUp);
+    this._onVis = () => { if (document.hidden) { cancelAnimationFrame(this._raf); this._raf = 0; } else if (!this._raf) this._raf = requestAnimationFrame(this._frame); };
+    document.addEventListener("visibilitychange", this._onVis);
+
+    this._sec = setInterval(() => { if (this.state.tasks.some((t) => t.status === "running") || this.state.toolName) this.setState({ tick: this.state.tick + 1 }); }, 1000);
+    this._raf = requestAnimationFrame(this._frame);
+  }
+
+  componentWillUnmount() {
+    cancelAnimationFrame(this._raf);
+    clearInterval(this._sec);
+    (this._timers || []).forEach(clearTimeout);
+    clearInterval(this._streamIv);
+    window.removeEventListener("resize", this._onResize);
+    window.removeEventListener("keydown", this._onKey);
+    window.removeEventListener("keyup", this._onKeyUp);
+    document.removeEventListener("visibilitychange", this._onVis);
+    if (this._ro) this._ro.disconnect();
+  }
+
+  // ---------- core geometry ----------
+  _buildGeometry() {
+    const rich = (this.props || {}).coreDetail !== "calm";
+    const N = rich ? 118 : 74, pts = [];
+    for (let i = 0; i < N; i++) { const y = 1 - (i / (N - 1)) * 2, r = Math.sqrt(Math.max(0, 1 - y * y)), th = i * 2.399963229728653; pts.push([Math.cos(th) * r, y, Math.sin(th) * r]); }
+    const seen = new Set(), edges = [];
+    for (let i = 0; i < N; i++) {
+      const d = [];
+      for (let j = 0; j < N; j++) { if (i === j) continue; const dx = pts[i][0] - pts[j][0], dy = pts[i][1] - pts[j][1], dz = pts[i][2] - pts[j][2]; d.push([dx * dx + dy * dy + dz * dz, j]); }
+      d.sort((a, b) => a[0] - b[0]);
+      for (let k = 0; k < (rich ? 3 : 2); k++) { const j = d[k][1], key = i < j ? i + ":" + j : j + ":" + i; if (!seen.has(key)) { seen.add(key); edges.push([Math.min(i, j), Math.max(i, j)]); } }
+    }
+    this._pts = pts; this._edges = edges;
+    this._parts = Array.from({ length: rich ? 84 : 34 }, () => ({ x: Math.random(), y: Math.random(), z: 0.3 + Math.random() * 0.7, s: 0.2 + Math.random() * 0.8 }));
+    this._stars = [];
+  }
+
+  _activeCanvas() {
+    const a = this.canvasRef.current, b = this.mCanvasRef.current;
+    if (a && a.clientWidth > 0) return a;
+    if (b && b.clientWidth > 0) return b;
+    return null;
+  }
+
+  _sizeCanvas() {
+    [this.canvasRef.current, this.mCanvasRef.current].forEach((c) => {
+      if (!c || !c.clientWidth) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
+      if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    });
+  }
+
+  _frame = (now) => {
+    this._raf = requestAnimationFrame(this._frame);
+    const c = this._activeCanvas();
+    if (!c) return;
+    if (c.width === 0) this._sizeCanvas();
+    const dt = Math.min(64, now - (this._last || now)); this._last = now;
+    const t = (now - this._t0) / 1000;
+    const fsm = this.state.fsm;
+
+    // simulated signals (labelled in the UI as a simulated jarvisd feed)
+    if (fsm === "speaking") {
+      const env = Math.max(0, Math.sin(t * 1.1) * 0.5 + 0.62);
+      const tgt = Math.min(1, env * (0.45 + 0.32 * Math.sin(t * 9.3) + 0.2 * Math.sin(t * 17.7) + 0.12 * Math.sin(t * 31.1)));
+      this._amp += (Math.max(0, tgt) - this._amp) * 0.28;
+    } else this._amp += (0 - this._amp) * 0.12;
+
+    if (this.state.micActive || fsm === "listening") {
+      const tgt = Math.max(0, 0.22 + 0.3 * Math.sin(t * 3.7) + 0.22 * Math.sin(t * 8.3) + 0.12 * Math.sin(t * 15.1));
+      this._mic += (tgt - this._mic) * 0.2;
+      if (this._mic > 0.42 && (!this._lastRipple || t - this._lastRipple > 0.42)) { this._lastRipple = t; this._ripples.push({ r: 0.34, a: 0.42 }); }
+    } else this._mic += (0 - this._mic) * 0.14;
+
+    const lv = this.levelRef.current;
+    if (lv) lv.style.width = Math.round(Math.min(1, this._mic) * 100) + "%";
+    [this.micRingRef.current, this.mMicRingRef.current].forEach((r) => {
+      if (!r) return;
+      const on = this.state.micActive || fsm === "listening";
+      r.style.opacity = on ? String(0.25 + this._mic * 0.7) : "0";
+      r.style.transform = "scale(" + (1 + (on ? this._mic * 0.16 : 0)) + ")";
+    });
+
+    const target = this.CORE[fsm] || this.CORE.idle;
+    if (!this._p) this._p = Object.assign({}, target, { col: target.col.slice() });
+    const k = this.state.reduced ? 1 : 1 - Math.exp(-dt / 95);
+    ["rad", "spin", "noise", "glow"].forEach((key) => { this._p[key] += (target[key] - this._p[key]) * k; });
+    for (let i = 0; i < 3; i++) this._p.col[i] += (target.col[i] - this._p.col[i]) * k;
+    this._p.mode = target.mode;
+    this._draw(c, t, dt);
+  };
+
+  _draw(c, t, dt) {
+    const ctx = c.getContext("2d");
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const W = c.width, H = c.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.scale(dpr, dpr);
+    const w = W / dpr, h = H / dpr, cx = w / 2, cy = h / 2 - 6;
+    const R = Math.min(w, h) * 0.29;
+    const p = this._p, reduced = this.state.reduced;
+    const col = (a) => "rgba(" + Math.round(p.col[0]) + "," + Math.round(p.col[1]) + "," + Math.round(p.col[2]) + "," + a + ")";
+    const amp = this._amp, mic = this._mic;
+    const spinT = reduced ? 0.6 : t;
+
+    // atmosphere
+    const g = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 2.9);
+    g.addColorStop(0, col(0.09 * p.glow)); g.addColorStop(0.45, col(0.035 * p.glow)); g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+
+    // horizon grid
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 3; i++) {
+      const rr = R * (1.5 + i * 0.42), tilt = 0.19 + i * 0.02, rot = spinT * (0.05 + i * 0.015) * (i % 2 ? -1 : 1);
+      ctx.strokeStyle = col(0.05 - i * 0.011);
+      ctx.beginPath(); ctx.ellipse(cx, cy, rr, rr * tilt, rot, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // particle field
+    if (!reduced) {
+      for (const q of this._parts) {
+        q.y -= 0.00012 * q.z * (dt / 16); if (q.y < -0.05) { q.y = 1.05; q.x = Math.random(); }
+        const px = q.x * w + Math.sin(spinT * 0.2 + q.z * 9) * 6, py = q.y * h;
+        ctx.fillStyle = col(0.05 + q.s * 0.1);
+        ctx.fillRect(px, py, 1.1, 1.1);
+      }
+    }
+
+    // lattice
+    const yaw = spinT * p.spin * 2.2, pitch = 0.42 + Math.sin(spinT * 0.24) * 0.1;
+    const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const rad = R * p.rad * (1 + amp * 0.14);
+    const proj = this._pts.map((v, i) => {
+      const n = reduced ? 0 : Math.sin(i * 1.77 + spinT * 1.15) * 0.5 + Math.sin(i * 4.13 - spinT * 0.7) * 0.5;
+      const d = 1 + n * p.noise * 0.34 + amp * 0.1 * Math.sin(i * 0.7 + spinT * 6);
+      let x = v[0] * d, y = v[1] * d, z = v[2] * d;
+      let x2 = x * cyw + z * syw, z2 = -x * syw + z * cyw;
+      let y2 = y * cp - z2 * sp, z3 = y * sp + z2 * cp;
+      const per = 2.7 / (2.7 - z3);
+      return [cx + x2 * rad * per, cy + y2 * rad * per, z3, per];
+    });
+    ctx.lineWidth = 1;
+    for (const e of this._edges) {
+      const a = proj[e[0]], b = proj[e[1]];
+      const dep = (a[2] + b[2]) / 2;
+      const al = (0.06 + Math.max(0, dep + 0.9) * 0.13) * (0.55 + p.glow * 0.6);
+      ctx.strokeStyle = col(Math.min(0.5, al));
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+    }
+    for (let i = 0; i < proj.length; i++) {
+      const a = proj[i];
+      if (a[2] < -0.25) continue;
+      const s = 0.7 + a[3] * 0.5;
+      ctx.fillStyle = col(0.14 + Math.max(0, a[2]) * 0.4);
+      ctx.fillRect(a[0] - s / 2, a[1] - s / 2, s, s);
+    }
+
+    // nucleus
+    const nr = rad * (0.3 + amp * 0.22 + (p.mode === "pulse" ? 0.12 : 0));
+    const ng = ctx.createRadialGradient(cx, cy, 0, cx, cy, nr * 2.4);
+    ng.addColorStop(0, col(Math.min(0.95, 0.5 + p.glow * 0.4 + amp * 0.3)));
+    ng.addColorStop(0.28, col(0.2 + amp * 0.16));
+    ng.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = ng; ctx.beginPath(); ctx.arc(cx, cy, nr * 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = col(0.42 + amp * 0.4); ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(cx, cy, nr * 0.72, 0, Math.PI * 2); ctx.stroke();
+
+    if (reduced) { this._drawStaticRing(ctx, cx, cy, R, col); return; }
+    this._drawMode(ctx, p.mode, cx, cy, R, rad, t, col, amp, mic);
+  }
+
+  _drawStaticRing(ctx, cx, cy, R, col) {
+    ctx.setLineDash([2, 6]); ctx.lineWidth = 1; ctx.strokeStyle = col(0.3);
+    ctx.beginPath(); ctx.arc(cx, cy, R * 1.32, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  _drawMode(ctx, mode, cx, cy, R, rad, t, col, amp, mic) {
+    if (mode === "open") {
+      for (let i = this._ripples.length - 1; i >= 0; i--) {
+        const r = this._ripples[i]; r.r += 0.012; r.a *= 0.965;
+        if (r.a < 0.01 || r.r > 2.2) { this._ripples.splice(i, 1); continue; }
+        ctx.strokeStyle = col(r.a); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(cx, cy, R * r.r, 0, Math.PI * 2); ctx.stroke();
+      }
+      const arc = 0.5 + mic * 1.1;
+      ctx.strokeStyle = col(0.5); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, R * 1.36, -Math.PI / 2 - arc / 2, -Math.PI / 2 + arc / 2); ctx.stroke();
+    } else if (mode === "bands") {
+      const n = 34;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+        const band = Math.abs(Math.sin(i * 1.7 + t * 6.1)) * 0.5 + Math.abs(Math.sin(i * 0.9 + t * 11.3)) * 0.5;
+        const len = R * (0.16 + amp * band * 0.72);
+        const r0 = R * 1.2;
+        ctx.strokeStyle = col(0.14 + amp * band * 0.5); ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx.lineTo(cx + Math.cos(a) * (r0 + len), cy + Math.sin(a) * (r0 + len)); ctx.stroke();
+      }
+    } else if (mode === "orbit") {
+      for (let i = 0; i < 3; i++) {
+        const rr = R * (1.18 + i * 0.16), sp = (i % 2 ? -1 : 1) * (0.5 + i * 0.22), n = 26 - i * 5;
+        for (let j = 0; j < n; j++) {
+          const a = (j / n) * Math.PI * 2 + t * sp;
+          const f = 0.35 + 0.65 * Math.pow(Math.max(0, Math.sin(a * 2 + t)), 2);
+          ctx.fillStyle = col(0.1 + f * 0.42);
+          const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr * 0.34;
+          ctx.beginPath(); ctx.arc(x, y, 1.5, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    } else if (mode === "resolve") {
+      const n = 40;
+      ctx.strokeStyle = col(0.4); ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      for (let i = 0; i <= n; i++) {
+        const x = cx - R * 1.5 + (i / n) * R * 3;
+        const decay = 1 - Math.abs(i / n - 0.5) * 1.6;
+        const y = cy + R * 1.62 + Math.sin(i * 0.9 + t * 9) * R * 0.16 * Math.max(0, decay);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      for (let i = 0; i < 16; i++) {
+        const ph = (t * 0.55 + i / 16) % 1;
+        const a = i * 2.4;
+        const rr = R * (1.7 - ph * 1.3);
+        ctx.fillStyle = col(0.5 * (1 - Math.abs(ph - 0.5) * 1.6));
+        ctx.beginPath(); ctx.arc(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr * 0.7, 1.4, 0, Math.PI * 2); ctx.fill();
+      }
+    } else if (mode === "stars") {
+      const items = this.state.memory.length ? this.state.memory : [0, 1, 2];
+      for (let i = 0; i < items.length; i++) {
+        const a = -Math.PI * 0.72 + i * 0.5 + Math.sin(t * 0.3 + i) * 0.05;
+        const ph = (t * 0.4 + i * 0.33) % 1;
+        const rr = R * (2.05 - ph * 0.72);
+        const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr * 0.78;
+        ctx.strokeStyle = col(0.1 + (1 - ph) * 0.18); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cx, cy); ctx.stroke();
+        ctx.fillStyle = col(0.35 + (1 - ph) * 0.45);
+        ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = col(0.18); ctx.beginPath(); ctx.arc(x, y, 6 + Math.sin(t * 2 + i) * 1.2, 0, Math.PI * 2); ctx.stroke();
+      }
+    } else if (mode === "radial") {
+      const n = 12;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + t * 0.12;
+        const on = i % 3 === Math.floor(t * 1.6) % 3;
+        const r0 = R * 1.24, len = R * (on ? 0.4 : 0.2);
+        ctx.strokeStyle = col(on ? 0.5 : 0.14); ctx.lineWidth = on ? 2 : 1;
+        ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.9); ctx.lineTo(cx + Math.cos(a) * (r0 + len), cy + Math.sin(a) * (r0 + len) * 0.9); ctx.stroke();
+        if (on) { ctx.fillStyle = col(0.6); ctx.beginPath(); ctx.arc(cx + Math.cos(a) * (r0 + len), cy + Math.sin(a) * (r0 + len) * 0.9, 2, 0, Math.PI * 2); ctx.fill(); }
+      }
+    } else if (mode === "arc") {
+      const rr = R * 1.34;
+      ctx.strokeStyle = col(0.1); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke();
+      const head = (t * 0.85) % (Math.PI * 2);
+      ctx.strokeStyle = col(0.62); ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.arc(cx, cy, rr, head, head + 1.05); ctx.stroke();
+      ctx.fillStyle = col(0.8);
+      ctx.beginPath(); ctx.arc(cx + Math.cos(head + 1.05) * rr, cy + Math.sin(head + 1.05) * rr, 2.4, 0, Math.PI * 2); ctx.fill();
+    } else if (mode === "transfer") {
+      const x1 = cx, y1 = cy, x2 = cx + R * 1.85, y2 = cy + R * 0.9;
+      ctx.strokeStyle = col(0.14); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo(cx + R, cy + R * 1.2, x2, y2); ctx.stroke();
+      for (let i = 0; i < 5; i++) {
+        const ph = (t * 0.65 + i / 5) % 1, mt = 1 - ph;
+        const bx = mt * mt * x1 + 2 * mt * ph * (cx + R) + ph * ph * x2;
+        const by = mt * mt * y1 + 2 * mt * ph * (cy + R * 1.2) + ph * ph * y2;
+        ctx.fillStyle = col(0.7 * (1 - ph * 0.7));
+        ctx.beginPath(); ctx.arc(bx, by, 2.1, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.strokeStyle = col(0.4); ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(x2, y2, 9 + Math.sin(t * 3) * 1.4, 0, Math.PI * 2); ctx.stroke();
+    } else if (mode === "pulse") {
+      const ph = (t * 0.9) % 1;
+      ctx.strokeStyle = col(0.5 * (1 - ph)); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, R * (1.1 + ph * 0.9), 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+
+  // ---------- simulated feed ----------
+  _clear() { (this._timers || []).forEach(clearTimeout); this._timers = []; clearInterval(this._streamIv); }
+  _at(ms, fn) { (this._timers = this._timers || []).push(setTimeout(fn, ms)); }
+  _now() { const d = new Date(); return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":"); }
+  _act(icon, label, detail, tone) {
+    this.setState((s) => ({ activity: [{ id: "a" + Date.now() + Math.random(), ts: this._now(), icon, label, detail: detail || "", tone: tone || "dim" }].concat(s.activity).slice(0, 60) }));
+  }
+  setFsm = (v, detail) => {
+    this.setState({ fsm: v, detail: detail || null, offline: v === "offline" });
+    this._act("◆", this.META[v].label + (detail ? " — " + detail : ""), "state: " + v, v === "error" ? "red" : v === "blocked" ? "amber" : "dim");
+  };
+
+  MEM = [
+    { path: "vault/decisions/2026-06-memory-write-path.md", title: "Decision: memory write path", snippet: "Jarvis never writes to the vault directly. Proposals land in inbox/ as reviewed notes; the indexer picks them up on the next pass.", score: 0.91, updated: "12 d ago", conflict: false },
+    { path: "vault/projects/jarvis-voice/index-refresh.md", title: "Vault index refresh runbook", snippet: "Refresh reconciles changed notes only. Full reindex is a separate command and takes ~9 min on the M4.", score: 0.78, updated: "3 d ago", conflict: false },
+    { path: "vault/daily/2026-07-24.md", title: "Daily note · 24 Jul", snippet: "Said we'd move embeddings to batches of 12 — an older note still says 25. Needs reconciling.", score: 0.64, updated: "4 d ago", conflict: true },
+  ];
+
+  runTurn = () => {
+    this._clear();
+    const reply = "We settled on write-through the reviewed inbox only — nothing touches the vault directly. Granite is on the index refresh now, batch seven of twelve. I'll tell you when it validates, not when it starts.";
+    this.setState({ memory: [], partial: "", stream: "", streamFull: reply, spokenIdx: -1, micActive: true, toolName: null, sheet: null, tab: "work", offline: false, conn: "open" });
+    this.setFsm("listening");
+    this._at(300, () => this.setState({ partial: "so what did we" }));
+    this._at(1000, () => this.setState({ partial: "so what did we decide about the memory write" }));
+    this._at(1700, () => this.setState({ partial: "so what did we decide about the memory write path, and where's the index refresh" }));
+    this._at(2400, () => {
+      this.setState({ micActive: false, partial: "" });
+      this.setFsm("transcribing");
+      this._act("▤", "Transcribed: “So what did we decide about the memory write path, and where's the index refresh?”", "stt.final ms: 366", "dim");
+      this.setState((s) => ({ turns: s.turns.concat([{ id: "u" + Date.now(), role: "user", text: "So what did we decide about the memory write path, and where's the index refresh?", time: this._now() }]) }));
+    });
+    this._at(2950, () => this.setFsm("thinking"));
+    this._at(3500, () => { this.setFsm("memory"); this.setState({ memory: this.MEM }); this._act("▥", "memory_recall → 3 hits (1 conflict)", 'args: {"query":"memory write path decision"}\nbudget_tokens: 600\nms: 214', "cyan"); });
+    this._at(4600, () => { this.setFsm("capability"); this._act("⚙", "capability_search → task_status, delegate_task, quick_action", 'args: {"query":"index refresh status"}\nms: 63', "cyan"); });
+    this._at(5400, () => { this.setState({ toolName: "task_status", toolStart: Date.now() }); this.setFsm("tool", "task_status"); });
+    this._at(6300, () => { this._act("⚙", "task_status(latest) → tk_9f31 running, tk_8c07 needs_review", "ms: 44", "cyan"); this.setState({ toolName: null }); this.setFsm("thinking"); });
+    this._at(6900, () => {
+      this.setFsm("speaking");
+      this._act("♪", "TTS started · kokoro-onnx first chunk 262 ms", "sentences: 3", "dim");
+      const words = reply.split(" ");
+      let i = 0;
+      this._streamIv = setInterval(() => {
+        i += 2;
+        this.setState({ stream: words.slice(0, i).join(" "), spokenIdx: Math.min(2, Math.floor((i / words.length) * 3)) });
+        if (i >= words.length) {
+          clearInterval(this._streamIv);
+          this._at(1400, () => {
+            this.setState((s) => ({ turns: s.turns.concat([{ id: "j" + Date.now(), role: "jarvis", text: reply, time: this._now(), meta: ["memory_recall · 3 hits", "task_status · 44 ms", "e2e 1.42 s"] }]), stream: "", streamFull: "", spokenIdx: -1 }));
+            this.setFsm("done");
+            this._at(900, () => this.setFsm("idle"));
+          });
+        }
+      }, 110);
+    });
+  };
+
+  goto = (v) => {
+    this._clear();
+    if (v === "worker_progress") this.setState({ tab: "work" });
+    if (v === "memory") this.setState({ memory: this.MEM });
+    if (v === "blocked") this._act("⚠", "Blocked · codex-task.sh reports worker unavailable", "recoverable: true", "amber");
+    if (v === "error") this._act("✕", "Ollama stream reset mid-turn · retrying with backoff", "recoverable: true\nstage: mediator", "red");
+    this.setState({ micActive: v === "listening", partial: v === "transcribing" ? "so what did we decide about the memory write path" : "", stream: v === "speaking" ? "Granite is on the index refresh now, batch seven of twelve." : "", streamFull: v === "speaking" ? "Granite is on the index refresh now, batch seven of twelve." : "", spokenIdx: v === "speaking" ? 1 : -1, toolName: v === "tool" ? "memory_recall" : null, toolStart: Date.now(), conn: v === "offline" ? "reconnecting" : "open" });
+    this.setFsm(v);
+  };
+
+  startMic = () => { if (this.state.micActive) return; this.setState({ micActive: true }); this.setFsm("listening"); };
+  stopMic = () => { if (!this.state.micActive) return; this.setState({ micActive: false }); this.setFsm("idle"); };
+  onMic = () => { this.state.micActive ? this.stopMic() : this.startMic(); };
+  onInterrupt = () => { this._clear(); this.setState({ micActive: false, stream: "", streamFull: "", spokenIdx: -1, partial: "", toolName: null, bargeIns: this.state.bargeIns + 1 }); this.setFsm("interrupted"); this._at(700, () => this.setFsm("idle")); };
+  onDraft = (e) => this.setState({ draft: e.target.value });
+  onDraftKey = (e) => { if (e.key === "Enter") this.onSend(); };
+  onSend = () => {
+    const text = (this.state.draft || "").trim(); if (!text) return;
+    this.setState((s) => ({ draft: "", turns: s.turns.concat([{ id: "u" + Date.now(), role: "user", text, time: this._now() }]) }));
+    this._act("✎", "Typed turn: " + text, "t: turn.text", "dim");
+    this.setFsm("thinking");
+    this._at(900, () => this.setFsm("speaking"));
+    this._at(2600, () => this.setFsm("idle"));
+  };
+  onMemQuery = (e) => this.setState({ memQuery: e.target.value });
+  toggleMode = () => this.setState({ micMode: this.state.micMode === "ptt" ? "vad" : "ptt" });
+  toggleReduced = () => this.setState({ reduced: !this.state.reduced });
+  toggleVerbose = () => this.setState({ verbose: !this.state.verbose });
+  cycleView = () => this.setState({ view: this.state.view === "mobile" ? "auto" : "mobile" });
+  closeSheet = () => this.setState({ sheet: null });
+  onRetry = () => { this.setState({ retryAttempt: this.state.retryAttempt + 1 }); };
+  onDismissOffline = () => this.setState({ offline: false });
+  control = (id, action) => {
+    this.setState((s) => ({ tasks: s.tasks.map((t) => (t.id !== id ? t : Object.assign({}, t, { status: action === "pause" ? "paused" : action === "resume" ? "running" : "canceled", note: action === "pause" ? "Paused by you · SIGSTOP sent to process group." : action === "resume" ? "Resumed · SIGCONT sent, session re-attached." : "Canceled by you · SIGTERM sent to process group." }))) }));
+    this._act("▦", "task_control(" + action + ") → " + id, 'args: {"id":"' + id + '","action":"' + action + '"}', action === "cancel" ? "amber" : "cyan");
+  };
+
+  // ---------- view helpers ----------
+  _statusStyle(st) {
+    const m = {
+      running: ["rgba(79,227,224,.4)", "rgba(79,227,224,.1)", "#9DF0EC", "running"],
+      queued: ["rgba(120,190,200,.24)", "rgba(120,190,200,.06)", "#9FB6BA", "queued"],
+      paused: ["rgba(120,190,200,.24)", "rgba(120,190,200,.06)", "#C8DBDE", "paused"],
+      done: ["rgba(104,234,208,.34)", "rgba(104,234,208,.08)", "#8DE8CE", "done"],
+      needs_review: ["rgba(242,179,92,.42)", "rgba(242,179,92,.1)", "#F2B35C", "needs review"],
+      failed: ["rgba(255,107,107,.42)", "rgba(255,107,107,.1)", "#FF8F8F", "failed"],
+      canceled: ["rgba(120,190,200,.2)", "transparent", "#6E858A", "canceled"],
+    }[st] || ["rgba(120,190,200,.24)", "transparent", "#9FB6BA", st];
+    return { style: { display: "inline-flex", alignItems: "center", height: "20px", padding: "0 8px", borderRadius: "4px", border: "1px solid " + m[0], background: m[1], color: m[2], fontSize: "10px", letterSpacing: "0.08em", textTransform: "uppercase", whiteSpace: "nowrap" }, label: m[3] };
+  }
+  _btn(kind) {
+    const base = { height: "26px", padding: "0 11px", borderRadius: "5px", fontSize: "11px", cursor: "pointer", border: "1px solid rgba(120,190,200,.18)", background: "transparent", color: "#C8DBDE" };
+    if (kind === "primary") return Object.assign(base, { border: "1px solid rgba(79,227,224,.34)", background: "rgba(79,227,224,.12)", color: "#9DF0EC", fontWeight: 600 });
+    if (kind === "danger") return Object.assign(base, { border: "1px solid rgba(255,107,107,.3)", color: "#FF8F8F" });
+    if (kind === "warn") return Object.assign(base, { border: "1px solid rgba(242,179,92,.4)", background: "rgba(242,179,92,.1)", color: "#F2B35C", fontWeight: 600 });
+    return base;
+  }
+  _fmt(sec) { const s = Math.max(0, Math.round(sec)); if (s < 60) return s + "s"; const m = Math.floor(s / 60); if (m < 60) return m + "m " + (s % 60) + "s"; const h = Math.floor(m / 60); return h + "h " + (m % 60) + "m"; }
+  _spark(arr, stroke) {
+    const min = Math.min.apply(null, arr), max = Math.max.apply(null, arr), sp = max - min || 1;
+    return arr.map((v, i) => (i / (arr.length - 1)) * 100 + "," + (16 - ((v - min) / sp) * 14).toFixed(1)).join(" ");
+  }
+  _pct(arr, q) { const s = arr.slice().sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; }
+
+  renderVals() {
+    const s = this.state, C = this.C;
+    const meta = this.META[s.fsm] || this.META.idle;
+    const cc = (this.CORE[s.fsm] || this.CORE.idle).col;
+    const accent = "rgb(" + cc[0] + "," + cc[1] + "," + cc[2] + ")";
+    const narrow = s.w < 860;
+    const forcedMobile = s.view === "mobile";
+    const showMobile = forcedMobile || narrow;
+    const showLeft = s.w >= 1280;
+
+    const connMap = { open: ["#4FE3E0", "connected"], reconnecting: ["#F2B35C", "reconnecting…"], connecting: ["#F2B35C", "connecting…"], closed: ["#FF6B6B", "offline"] };
+    const cm = connMap[s.conn] || connMap.closed;
+
+    const memory = (s.memory || []).filter((m) => !s.memQuery || (m.title + m.path + m.snippet).toLowerCase().indexOf(s.memQuery.toLowerCase()) >= 0).map((m) => ({
+      title: m.title, path: m.path, snippet: m.snippet, updated: m.updated, conflict: m.conflict,
+      scoreLabel: m.score.toFixed(2),
+      cardStyle: { padding: "12px 13px", borderRadius: "9px", border: "1px solid " + (m.conflict ? "rgba(242,179,92,.26)" : "rgba(120,190,200,.13)"), background: "rgba(11,17,20,.75)", animation: "jvRise .28s ease-out" },
+      barStyle: { height: "100%", width: Math.round(m.score * 100) + "%", borderRadius: "2px", background: m.conflict ? "linear-gradient(90deg,#8A6B33,#F2B35C)" : "linear-gradient(90deg,#1E7C7E,#4FE3E0)" },
+    }));
+
+    const tasks = s.tasks.map((t) => {
+      const st = this._statusStyle(t.status);
+      const actions = [];
+      if (t.status === "running") actions.push({ label: "Pause", aria: "Pause task", style: this._btn(), onClick: () => this.control(t.id, "pause") });
+      if (t.status === "paused") actions.push({ label: "Resume", aria: "Resume task", style: this._btn("primary"), onClick: () => this.control(t.id, "resume") });
+      if (["running", "paused", "queued"].indexOf(t.status) >= 0) actions.push({ label: "Cancel", aria: "Cancel task", style: this._btn("danger"), onClick: () => this.control(t.id, "cancel") });
+      if (t.status === "needs_review") { actions.push({ label: "Re-delegate", aria: "Re-delegate task", style: this._btn("warn"), onClick: () => this.control(t.id, "resume") }); actions.push({ label: "Dismiss", aria: "Dismiss task", style: this._btn(), onClick: () => this.control(t.id, "cancel") }); }
+      const elapsed = t.status === "running" ? this._fmt(t.started + s.tick) : this._fmt(t.started);
+      return {
+        id: t.id, title: t.title, note: t.note, session: t.session,
+        statusLabel: st.label, chipStyle: st.style,
+        worker: (t.kind || "").toUpperCase(),
+        workerStyle: { fontSize: "9px", letterSpacing: "0.12em", padding: "2px 6px", borderRadius: "3px", border: "1px solid rgba(120,190,200,.2)", color: t.kind === "codex" ? "#B9A6E8" : "#9FB6BA" },
+        elapsed: (t.status === "running" ? "" : t.status === "done" ? "took " : "") + elapsed,
+        hasBar: t.status === "running", barStyle: { height: "100%", width: Math.round(t.bar * 100) + "%", borderRadius: "2px", background: "linear-gradient(90deg,#1E7C7E,#4FE3E0)" },
+        cardStyle: { padding: "13px", borderRadius: "9px", border: "1px solid " + (t.status === "needs_review" ? "rgba(242,179,92,.28)" : t.status === "running" ? "rgba(79,227,224,.24)" : "rgba(120,190,200,.11)"), background: t.status === "running" ? "rgba(11,20,23,.85)" : "rgba(11,17,20,.7)", opacity: t.status === "canceled" ? 0.6 : 1 },
+        actions, actionsMobile: actions.map((a) => ({ label: a.label, aria: a.aria, onClick: a.onClick, style: Object.assign({}, a.style, { height: "36px", padding: "0 14px", fontSize: "13px" }) })),
+        expanded: s.expandedTask === t.id, toggleLabel: s.expandedTask === t.id ? "Hide detail" : "Detail",
+        onToggle: () => this.setState({ expandedTask: s.expandedTask === t.id ? null : t.id }),
+        events: (t.events || []).map((e) => ({ ts: e.ts, label: e.label, dotStyle: { width: "5px", height: "5px", marginTop: "5px", borderRadius: "50%", background: e.tone === "amber" ? "#F2B35C" : e.tone === "cyan" ? "#4FE3E0" : "rgba(120,190,200,.35)" } })),
+      };
+    });
+
+    const activity = s.activity.map((e) => ({
+      ts: e.ts, icon: e.icon, label: e.label, detail: e.detail, showDetail: s.verbose && !!e.detail,
+      rowStyle: { padding: "7px 8px", borderRadius: "7px", border: "1px solid " + (e.tone === "red" ? "rgba(255,107,107,.2)" : e.tone === "amber" ? "rgba(242,179,92,.18)" : "transparent"), background: e.tone === "red" || e.tone === "amber" ? "rgba(14,16,15,.6)" : "transparent" },
+      iconStyle: { fontSize: "10px", paddingTop: "2px", color: e.tone === "red" ? "#FF8F8F" : e.tone === "amber" ? "#F2B35C" : e.tone === "cyan" ? "#4FE3E0" : "#8FA3A8" },
+    }));
+
+    const stages = [["stt", "STT"], ["mediator_first_token", "MEDIATOR"], ["tts_first_chunk", "TTS"], ["e2e_first_audio", "E2E"]];
+    const latency = stages.map(([k, label]) => ({ stage: label === "E2E" ? "end-to-end first audio" : label === "STT" ? "stt final" : label === "MEDIATOR" ? "mediator first token" : "tts first chunk", p50: this._pct(s.latency[k], 0.5) + " ms", p95: this._pct(s.latency[k], 0.95) + " ms", points: this._spark(s.latency[k]), stroke: k === "e2e_first_audio" ? "#4FE3E0" : "rgba(120,190,200,0.55)" }));
+
+    const wfTotals = [["STT", 366, 0.26], ["MED", 612, 0.43], ["TTS", 262, 0.19], ["PLAY", 180, 0.12]];
+    const waterfall = wfTotals.map(([label, ms, frac], i) => ({
+      label, ms: ms + "ms", title: label + " " + ms + "ms",
+      segStyle: { height: "3px", flex: String(frac), borderRadius: "2px", background: i === 1 ? "linear-gradient(90deg,#1E7C7E,#4FE3E0)" : "rgba(120,190,200,.22)" },
+      dotStyle: { width: "4px", height: "4px", borderRadius: "50%", background: i === 1 ? "#4FE3E0" : "rgba(120,190,200,.35)" },
+    }));
+
+    const health = [
+      { name: "ollama", detail: "127.0.0.1:11434 · 3 models", ok: true, tag: "OK" },
+      { name: "stt", detail: "faster-whisper base.en int8 · warm", ok: true, tag: "OK" },
+      { name: "tts", detail: "kokoro-onnx am_michael · warm", ok: true, tag: "OK" },
+      { name: "db", detail: "jarvis.db WAL · 4 open tasks", ok: true, tag: "OK" },
+      { name: "mediator", detail: s.fsm === "error" ? "stream reset · retrying" : "gemma4:e4b-it-qat · keep_alive 30m", ok: s.fsm !== "error", tag: s.fsm === "error" ? "RETRY" : "OK" },
+    ].map((h) => ({ name: h.name, detail: h.detail, dotStyle: { width: "6px", height: "6px", borderRadius: "50%", flex: "none", background: h.ok ? "#4FE3E0" : "#FF6B6B", boxShadow: h.ok ? "0 0 8px 1px rgba(79,227,224,.4)" : "0 0 8px 1px rgba(255,107,107,.4)" }, tag: h.tag, tagStyle: { fontSize: "9px", letterSpacing: "0.1em", color: h.ok ? "#6E858A" : "#FF8F8F" } }));
+
+    const tabDef = [["work", "Work", tasks.filter((t) => ["running", "queued", "paused"].indexOf(s.tasks.find((x) => x.id === t.id).status) >= 0).length], ["activity", "Activity", s.activity.length]];
+    if (!showLeft) tabDef.push(["memory", "Memory", s.memory.length || ""]);
+    tabDef.push(["system", "System", ""]);
+    const tab = !showLeft || s.tab !== "memory" ? s.tab : "work";
+    const tabs = tabDef.map(([k, label, badge]) => ({
+      label, aria: label + " panel", onClick: () => this.setState({ tab: k }),
+      style: { display: "inline-flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 12px", borderRadius: "6px", border: "1px solid " + (tab === k ? "rgba(79,227,224,.3)" : "transparent"), background: tab === k ? "rgba(79,227,224,.09)" : "transparent", color: tab === k ? "#E8F4F6" : "#7FA0A5", fontSize: "12px", fontWeight: tab === k ? 600 : 400, cursor: "pointer" },
+      badge: badge === "" ? "" : String(badge),
+      badgeStyle: { fontSize: "10px", fontFamily: C.mono, color: tab === k ? "#4FE3E0" : "#6E858A" },
+    }));
+
+    const sheetTabs = [["tasks", "Tasks", s.tasks.filter((t) => ["running", "queued", "paused", "needs_review"].indexOf(t.status) >= 0).length], ["memory", "Memory", s.memory.length], ["activity", "Activity", s.activity.length]].map(([k, label, badge]) => ({
+      label, aria: label + " panel", onClick: () => this.setState({ sheet: k }),
+      style: { flex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "6px", height: "36px", borderRadius: "8px", border: "1px solid rgba(120,190,200,.14)", background: "rgba(11,17,20,.7)", color: "#9FB6BA", fontSize: "12px", cursor: "pointer" },
+      badge: badge ? String(badge) : "", badgeStyle: { fontSize: "10px", fontFamily: C.mono, color: "#4FE3E0" },
+    }));
+
+    const pillStates = ["idle", "listening", "transcribing", "thinking", "memory", "capability", "tool", "delegating", "worker_progress", "speaking", "interrupted", "blocked", "error", "done", "offline"];
+    const statePills = pillStates.map((v) => ({
+      label: this.META[v].label, aria: "Preview " + v + " state", onClick: () => this.goto(v),
+      style: { height: "24px", padding: "0 9px", borderRadius: "4px", border: "1px solid " + (s.fsm === v ? "rgba(79,227,224,.4)" : "rgba(120,190,200,.13)"), background: s.fsm === v ? "rgba(79,227,224,.12)" : "transparent", color: s.fsm === v ? "#9DF0EC" : "#6E858A", fontSize: "10px", letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap" },
+    }));
+
+    const sentences = (s.streamFull || "").split(/(?<=\.)\s+/);
+    let done = "", now = "", rest = "";
+    if (s.spokenIdx >= 0 && sentences.length) {
+      done = sentences.slice(0, s.spokenIdx).join(" ") + (s.spokenIdx > 0 ? " " : "");
+      now = sentences[s.spokenIdx] || "";
+      const shown = s.stream || "";
+      if (shown.length < (done + now).length) { now = shown.slice(done.length); rest = ""; }
+      else rest = " " + sentences.slice(s.spokenIdx + 1).join(" ").slice(0, Math.max(0, shown.length - done.length - now.length));
+    } else { done = s.stream || ""; }
+
+    const activeTaskRaw = s.tasks.find((t) => t.status === "running") || s.tasks.find((t) => t.status === "needs_review");
+    const activeTask = activeTaskRaw ? tasks.find((t) => t.id === activeTaskRaw.id) : null;
+
+    return {
+      rootRef: this.rootRef, canvasRef: this.canvasRef, mCanvasRef: this.mCanvasRef, micRingRef: this.micRingRef, mMicRingRef: this.mMicRingRef, levelRef: this.levelRef, logRef: this.logRef,
+      showControls: (this.props || {}).showPrototypeControls !== false,
+      showDesktop: !showMobile, showMobile: showMobile, showPhoneChrome: forcedMobile && !narrow && (this.props || {}).showPrototypeControls !== false,
+      mobileWrapStyle: forcedMobile && !narrow
+        ? { position: "absolute", inset: "0", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "14px", padding: "16px", background: "radial-gradient(80% 60% at 50% 0%,#0A1216,#05080A)" }
+        : { position: "absolute", inset: "0", display: "flex", flexDirection: "column", background: "radial-gradient(80% 60% at 50% 0%,#0A1216,#05080A)" },
+      phoneStyle: forcedMobile && !narrow
+        ? { position: "relative", flex: "0 1 844px", width: "390px", minHeight: "0", display: "flex", flexDirection: "column", overflow: "hidden", borderRadius: "38px", border: "1px solid rgba(120,190,200,.2)", background: "radial-gradient(100% 60% at 50% 0%,#0A1216,#06090B)", boxShadow: "0 40px 90px rgba(0,0,0,.6), inset 0 0 0 6px #0A0D0F" }
+        : { position: "relative", flex: "1", width: "100%", minHeight: "0", display: "flex", flexDirection: "column", overflow: "hidden", background: "transparent" },
+
+      e2eLabel: (this._pct(s.latency.e2e_first_audio, 0.5) / 1000).toFixed(2) + " s",
+      ramLabel: s.ramFree.toFixed(1) + " GB",
+      ramBarStyle: { height: "100%", width: Math.round(((24 - s.ramFree) / 24) * 100) + "%", borderRadius: "2px", background: "linear-gradient(90deg,#1E7C7E,#4FE3E0)" },
+      connLabel: cm[1], connDotStyle: { width: "7px", height: "7px", borderRadius: "50%", flex: "none", background: cm[0], boxShadow: "0 0 9px 1px " + cm[0] + "66", animation: s.conn === "open" ? "none" : "jvBlink 1.2s ease-in-out infinite" },
+      reducedLabel: s.reduced ? "MOTION OFF" : "MOTION ON",
+      reducedBtnStyle: { height: "28px", padding: "0 10px", borderRadius: "6px", border: "1px solid " + (s.reduced ? "rgba(242,179,92,.4)" : "rgba(120,190,200,.16)"), background: s.reduced ? "rgba(242,179,92,.1)" : "rgba(20,32,36,.6)", color: s.reduced ? "#F2B35C" : "#9FB6BA", fontSize: "10px", letterSpacing: "0.12em", cursor: "pointer", whiteSpace: "nowrap", flex: "none" },
+      viewLabel: forcedMobile ? "DESKTOP VIEW" : "MOBILE VIEW",
+      cycleView: this.cycleView, toggleReduced: this.toggleReduced, toggleVerbose: this.toggleVerbose,
+      verboseLabel: s.verbose ? "TRACE DETAIL: ON" : "TRACE DETAIL: OFF",
+      verboseStyle: { height: "26px", padding: "0 10px", borderRadius: "5px", border: "1px solid " + (s.verbose ? "rgba(79,227,224,.34)" : "rgba(120,190,200,.16)"), background: s.verbose ? "rgba(79,227,224,.1)" : "transparent", color: s.verbose ? "#9DF0EC" : "#8FA3A8", fontSize: "10px", letterSpacing: "0.08em", cursor: "pointer" },
+      activityCountLabel: s.activity.length + " events",
+
+      stateLabel: meta.label, stateHint: s.detail ? meta.hint + " · " + s.detail : meta.hint,
+      stateLabelStyle: { fontSize: "15px", fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase", color: accent, textShadow: "0 0 18px " + accent + "55" },
+      stateDotStyle: { width: "6px", height: "6px", borderRadius: "50%", background: accent, boxShadow: "0 0 10px 2px " + accent + "66", animation: ["listening", "speaking", "thinking", "tool", "worker_progress"].indexOf(s.fsm) >= 0 ? "jvBlink 1.3s ease-in-out infinite" : "none" },
+      coreModeLabel: (s.reduced ? "STATIC · " : "LATTICE · ") + (this.CORE[s.fsm] || this.CORE.idle).mode.toUpperCase(),
+      turnIdLabel: "#8421",
+      waterfall,
+
+      hasToolChip: !!s.toolName, toolName: s.toolName || "", toolElapsed: this._fmt((Date.now() - s.toolStart) / 1000),
+      turns: s.turns.slice(-14).map((t) => ({
+        text: t.text, time: t.time,
+        roleLabel: t.role === "user" ? "YOU" : t.role === "jarvis" ? "JARVIS" : "SYSTEM",
+        roleStyle: { fontSize: "9px", letterSpacing: "0.14em", color: t.role === "user" ? "#4FE3E0" : t.role === "jarvis" ? "#C8DBDE" : "#8FA3A8" },
+        textStyle: t.role === "system"
+          ? { fontSize: "12px", fontFamily: C.mono, color: "#6E858A", lineHeight: 1.5 }
+          : { fontSize: "16px", lineHeight: 1.55, color: t.role === "user" ? "#C8DBDE" : "#E8F4F6", textWrap: "pretty" },
+        textStyleMobile: t.role === "system"
+          ? { marginTop: "4px", fontSize: "11px", fontFamily: C.mono, color: "#6E858A", lineHeight: 1.5 }
+          : { marginTop: "4px", fontSize: "15px", lineHeight: 1.55, color: t.role === "user" ? "#C8DBDE" : "#E8F4F6" },
+        hasMeta: !!(t.meta && t.meta.length), meta: t.meta || [],
+      })),
+      hasPartial: !!s.partial, partial: s.partial,
+      hasStreaming: !!(s.stream || "").length,
+      streamDone: done, spokenNow: now, streamRest: rest,
+      spokenStyle: { color: "#FFFFFF", background: "linear-gradient(180deg,rgba(79,227,224,0),rgba(79,227,224,.14))", boxShadow: "inset 0 -1px 0 rgba(79,227,224,.7)" },
+
+      micActive: s.micActive, micAria: s.micActive ? "Stop microphone" : "Start microphone",
+      micBtnStyle: { position: "absolute", inset: "0", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", cursor: "pointer", border: "1px solid " + (s.micActive ? "rgba(79,227,224,.7)" : "rgba(120,190,200,.22)"), background: s.micActive ? "radial-gradient(circle at 50% 35%,rgba(79,227,224,.34),rgba(10,26,28,.9))" : "radial-gradient(circle at 50% 35%,rgba(30,50,54,.9),rgba(10,16,19,.95))", color: s.micActive ? "#EAFFFE" : "#9FB6BA", boxShadow: s.micActive ? "0 0 26px rgba(79,227,224,.3)" : "none", transition: "border-color .2s,background .25s,color .2s" },
+      micBtnStyleMobile: { position: "absolute", inset: "0", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", cursor: "pointer", border: "1px solid " + (s.micActive ? "rgba(79,227,224,.7)" : "rgba(120,190,200,.24)"), background: s.micActive ? "radial-gradient(circle at 50% 35%,rgba(79,227,224,.36),rgba(10,26,28,.92))" : "radial-gradient(circle at 50% 35%,rgba(30,50,54,.9),rgba(10,16,19,.95))", color: s.micActive ? "#EAFFFE" : "#C8DBDE", boxShadow: s.micActive ? "0 0 30px rgba(79,227,224,.34)" : "none" },
+      onMic: this.onMic, onInterrupt: this.onInterrupt,
+      interruptStyle: { height: "44px", padding: "0 15px", borderRadius: "9px", cursor: s.fsm === "speaking" ? "pointer" : "not-allowed", border: "1px solid " + (s.fsm === "speaking" ? "rgba(242,179,92,.45)" : "rgba(120,190,200,.12)"), background: s.fsm === "speaking" ? "rgba(242,179,92,.12)" : "transparent", color: s.fsm === "speaking" ? "#F2B35C" : "#6E858A", fontSize: "12px", fontWeight: 600 },
+      interruptStyleMobile: { width: "46px", height: "46px", borderRadius: "23px", flex: "none", cursor: "pointer", border: "1px solid " + (s.fsm === "speaking" ? "rgba(242,179,92,.45)" : "rgba(120,190,200,.12)"), background: s.fsm === "speaking" ? "rgba(242,179,92,.12)" : "transparent", color: s.fsm === "speaking" ? "#F2B35C" : "#6E858A", fontSize: "11px" },
+      modeLabel: s.micMode === "vad" ? "VAD · continuous (experimental)" : "PUSH-TO-TALK",
+      modeBtnStyle: { height: "26px", padding: "0 10px", borderRadius: "5px", border: "1px solid " + (s.micMode === "vad" ? "rgba(242,179,92,.4)" : "rgba(120,190,200,.16)"), background: s.micMode === "vad" ? "rgba(242,179,92,.09)" : "transparent", color: s.micMode === "vad" ? "#F2B35C" : "#9FB6BA", fontSize: "10px", letterSpacing: "0.08em", cursor: "pointer" },
+      draft: s.draft, onDraft: this.onDraft, onDraftKey: this.onDraftKey, onSend: this.onSend, toggleMode: this.toggleMode,
+
+      memory, memEmpty: memory.length === 0, memCountLabel: memory.length ? memory.length + " HITS" : "IDLE", memQuery: s.memQuery, onMemQuery: this.onMemQuery,
+      tasks, activity, latency, health, tabs, sheetTabs, statePills,
+      tabWork: tab === "work", tabActivity: tab === "activity", tabSystem: tab === "system", tabMemory: tab === "memory",
+      showLeft, gridStyle: { flex: "1", minHeight: "0", display: "grid", gridTemplateColumns: showLeft ? "304px minmax(0,1fr) 372px" : "minmax(0,1fr) 344px" },
+      showWaterfallLabels: s.w >= 1180, showWaterfallCompact: s.w < 1180,
+      showModelStats: s.w >= 1280, showE2EStat: s.w >= 1024,
+      workerResidency: s.workerResident ? "RESIDENT" : "ON DEMAND",
+      workerResidencyStyle: { fontSize: "10px", letterSpacing: "0.08em", color: s.workerResident ? "#4FE3E0" : "#6E858A" },
+      bargeIns: String(s.bargeIns), errCount: String(s.errCount),
+      offline: s.offline, retryAttempt: String(s.retryAttempt), retryIn: s.retryIn, lastEventAgo: s.lastEventAgo, onRetry: this.onRetry, onDismissOffline: this.onDismissOffline,
+      runTurn: this.runTurn,
+      hasActiveTask: !!activeTask, activeTask: activeTask || {},
+      sheetOpen: !!s.sheet, sheetTitle: s.sheet === "tasks" ? "TASKS & WORKERS" : s.sheet === "memory" ? "MEMORY" : "ACTIVITY",
+      sheetIsTasks: s.sheet === "tasks", sheetIsMemory: s.sheet === "memory", sheetIsActivity: s.sheet === "activity", closeSheet: this.closeSheet,
+    };
+  }
+}
+</script>
+</body>
+</html>

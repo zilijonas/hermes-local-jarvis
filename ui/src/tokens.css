@@ -1,0 +1,71 @@
+/* tokens.css — Jarvis Command Centre design tokens.
+ *
+ * SCOPED UNDER #jarvis-voice-root ONLY (never :root): the plugin mounts
+ * inside the Hermes dashboard SPA and must not leak variables into the host
+ * page. Every color below is ported 1:1 from the design prototype
+ * (design/"Jarvis Command Centre.dc.html") / the binding redesign spec.
+ *
+ * Contrast notes (against --jv-bg #070A0C / --jv-surface #0B1114):
+ *   --jv-text        #E8F4F6  ~17.5:1  body text            (AA/AAA)
+ *   --jv-text-dim    #9FB6BA   ~8.7:1  secondary text       (AA/AAA)
+ *   --jv-text-faint  #8FA3A8   ~7.2:1  tertiary/labels      (AA)
+ *   --jv-text-micro  #6E858A   ~4.8:1  micro-labels ≥9px    (AA large-ish; used
+ *                                       for uppercase tracked micro type only)
+ *   --jv-text-ghost  #46595E   ~2.4:1  HAIRLINES ONLY — never use for text.
+ *   --jv-accent      #4FE3E0  ~11.5:1  accent text/icons    (AA/AAA)
+ *   --jv-warn        #F2B35C  ~10.2:1  warning text         (AA/AAA)
+ *   --jv-danger      #FF6B6B   ~6.6:1  danger text          (AA)
+ *   --jv-ok          #68EAD0  ~12.8:1  success text         (AA/AAA)
+ */
+#jarvis-voice-root {
+  /* surfaces */
+  --jv-bg: #070A0C;
+  --jv-surface: #0B1114;
+  --jv-surface-2: #101A1E;
+  --jv-line: rgba(120, 190, 200, 0.12);
+  --jv-line-strong: rgba(120, 190, 200, 0.22);
+
+  /* type */
+  --jv-text: #E8F4F6;
+  --jv-text-dim: #9FB6BA;
+  --jv-text-faint: #8FA3A8;
+  --jv-text-micro: #6E858A;
+  --jv-text-ghost: #46595E; /* hairlines only, never text */
+
+  /* accent + status */
+  --jv-accent: #4FE3E0;
+  --jv-accent-soft: #9DF0EC;
+  --jv-accent-deep: #1E7C7E;
+  --jv-warn: #F2B35C;
+  --jv-danger: #FF6B6B;
+  --jv-ok: #68EAD0;
+
+  /* spacing — 4px base scale */
+  --jv-1: 4px;
+  --jv-2: 8px;
+  --jv-3: 12px;
+  --jv-4: 16px;
+  --jv-5: 22px;
+  --jv-6: 32px;
+
+  /* radius */
+  --jv-r-sm: 5px;
+  --jv-r-md: 9px;
+  --jv-r-lg: 12px;
+
+  /* elevation */
+  --jv-e-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+  --jv-e-2: 0 18px 40px rgba(0, 0, 0, 0.45);
+  --jv-bloom: 0 0 12px 2px rgba(79, 227, 224, 0.45);
+
+  /* motion */
+  --jv-fast: 120ms;
+  --jv-base: 220ms;
+  --jv-slow: 340ms;
+  --jv-ease: cubic-bezier(0.2, 0.7, 0.25, 1);
+  --jv-core-blend: 95ms; /* intelligence-core exponential blend time constant */
+
+  /* type stacks (prototype) */
+  --jv-font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --jv-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

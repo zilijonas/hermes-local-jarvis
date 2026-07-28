@@ -3,220 +3,477 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>jarvis-voice visualizer harness</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='none' stroke='%2322d3ee' stroke-width='1.5'/></svg>" />
+<title>jarvis-voice command centre harness</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='none' stroke='%234FE3E0' stroke-width='1.5'/></svg>" />
 <!--
-  Standalone eyeball harness for the Three.js visualizer. No Hermes host, no
-  React, no jarvisd needed — works from file:// or `python3 -m http.server`
-  (run from the repo root or ui/).
+  Standalone harness for the Jarvis Command Centre UI. No Hermes host, no
+  jarvisd needed — works from file:// or `python3 -m http.server`.
 
-  It stubs the SDK globals, loads the REAL dist bundle, then drives the scene
-  through window.__JARVIS_VOICE_INTERNALS__.createVisualizer with a fake WS
-  event feed (same {t:"state"...}/{t:"tts.amp"...}/{t:"memory.hits"...}
-  shapes app.js consumes).
+  FULL-APP MODE (default): loads React 18 UMD from ./node_modules (dev dep),
+  stubs window.__HERMES_PLUGIN_SDK__/__HERMES_PLUGINS__, replaces
+  window.WebSocket with a fake jarvisd feed and window.fetch for the
+  /api/plugins/jarvis-voice/* endpoints, then mounts the REAL dist bundle's
+  App. Drive it with:
+    - the 15 state pills (each sends the same {t:"state",...} & friends the
+      server would)
+    - ▶ RUN TURN — a scripted full pipeline pass (partial → final → memory →
+      capability → tool → stream+speak → done)
+    - width presets 1440 / 1024 / 390 (390 renders the mobile shell) — or
+      just resize the window
+    - "go offline / back online" — exercises reconnect + the offline sheet
+    - the app's own MOTION ON/OFF button for reduced motion
+  The mic button performs a real getUserMedia (browser permitting); audio
+  worklet asset URLs resolve only under a real host, so TTS playback stays
+  silent here — the core's speaking motion is driven via tts.amp fallback.
 
-  Drive it with:
-    - the state buttons below (one per FSM state)
-    - "auto demo" for a scripted full-pipeline sequence
-    - ?state=<name> to jump to a state on load, ?demo=1 to auto-run the script
-    - the mic slider (feeds onMicLevel; visible in `listening`)
-    - "speech: analyser stub" synthesizes getLevels() speech envelopes so the
-      `speaking` state reacts; uncheck to exercise the tts.amp fallback path
+  VISUALIZER-ONLY MODE: ?vis=1 — no React needed; drives
+  __JARVIS_VOICE_INTERNALS__.createVisualizer directly (all 15 states, mic
+  slider, analyser stub, reduced motion), like the pre-redesign harness.
+
+  Query params: ?vis=1 · ?state=<name> · ?demo=1 (auto-run turn) · ?w=390
 -->
 <link rel="stylesheet" href="../hermes-plugin/dashboard/dist/style.css" />
 <style>
-  html, body { margin: 0; height: 100%; background: #0b0b0f; color: #9ca3af;
-    font-family: system-ui, -apple-system, sans-serif; }
-  .hz-wrap { display: flex; flex-direction: column; height: 100%; }
-  .hz-stage { position: relative; flex: 1 1 auto; min-height: 0; }
-  .hz-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  .hz-panel { flex: none; padding: 10px 12px; border-top: 1px solid #26262f;
-    display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
-  .hz-panel button { background: #15151b; color: #cbd5e1; border: 1px solid #26262f;
-    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
-  .hz-panel button:hover { border-color: #4b5563; }
-  .hz-panel button.hz-on { border-color: #22d3ee; color: #22d3ee; }
-  .hz-sep { width: 1px; height: 20px; background: #26262f; margin: 0 4px; }
-  #hz-status { margin-left: auto; color: #6b7280; font-variant-numeric: tabular-nums; }
+  html, body { margin: 0; height: 100%; background: #04070a; color: #9FB6BA;
+    font-family: -apple-system, system-ui, sans-serif; overflow: hidden; }
+  #hz-mount { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+    width: 100%; box-shadow: 0 0 0 1px rgba(120,190,200,.15); transition: width .2s ease; }
+  #hz-mount > div[id="jarvis-voice-root"] { height: 100%; }
+  .hz-panel { position: fixed; right: 10px; bottom: 10px; z-index: 999; max-width: 440px;
+    background: rgba(7,12,15,.96); border: 1px solid #1d3237; border-radius: 10px;
+    padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+    font-size: 11px; box-shadow: 0 12px 40px rgba(0,0,0,.6); }
+  .hz-panel.hz-min { max-width: none; padding: 6px 10px; }
+  .hz-panel button { background: #0d181c; color: #b8ccd0; border: 1px solid #24404a;
+    border-radius: 5px; padding: 4px 8px; font-size: 11px; cursor: pointer; }
+  .hz-panel button:hover { border-color: #4FE3E0; }
+  .hz-panel button.hz-on { border-color: #4FE3E0; color: #4FE3E0; }
+  .hz-sep { flex-basis: 100%; height: 1px; background: #16272c; margin: 2px 0; }
+  .hz-tag { color: #56707a; letter-spacing: .1em; font-size: 9px; width: 100%; }
+  #hz-status { margin-left: auto; color: #4FE3E0; font-family: ui-monospace, Menlo, monospace; }
   label { display: inline-flex; gap: 4px; align-items: center; }
 </style>
 </head>
 <body>
-<div class="hz-wrap">
-  <div class="hz-stage" id="hz-stage"><canvas id="hz-canvas"></canvas></div>
-  <div class="hz-panel" id="hz-states"></div>
-  <div class="hz-panel">
-    <button id="hz-demo">▶ auto demo</button>
-    <button id="hz-memory">memory.hits</button>
-    <div class="hz-sep"></div>
-    <label><input type="checkbox" id="hz-analyser" checked /> speech: analyser stub (uncheck = tts.amp fallback)</label>
-    <label>mic <input type="range" id="hz-mic" min="0" max="100" value="0" /></label>
-    <div class="hz-sep"></div>
-    <label><input type="checkbox" id="hz-reduced" /> reduced motion</label>
-    <button id="hz-losectx">lose GL context</button>
-    <span id="hz-status">idle</span>
-  </div>
+<div id="hz-mount"></div>
+<div class="hz-panel" id="hz-panel">
+  <div class="hz-tag">JARVIS HARNESS · SIMULATED jarvisd FEED <span id="hz-status">boot…</span></div>
+  <div id="hz-states" style="display:contents"></div>
+  <div class="hz-sep"></div>
+  <button id="hz-turn">▶ RUN TURN</button>
+  <button id="hz-memory">memory.hits</button>
+  <button id="hz-task">task.update</button>
+  <button id="hz-offline">go offline</button>
+  <div class="hz-sep"></div>
+  <span class="hz-tag" style="width:auto">WIDTH</span>
+  <button data-w="1440">1440</button>
+  <button data-w="1024">1024</button>
+  <button data-w="390">390</button>
+  <button data-w="fit" class="hz-on">fit</button>
+  <button id="hz-hide" style="margin-left:auto">–</button>
 </div>
 
 <script>
-  // Stub the host globals BEFORE the bundle loads (register becomes a no-op;
-  // the bundle also exposes __JARVIS_VOICE_INTERNALS__ regardless).
-  window.__HERMES_PLUGIN_SDK__ = { React: { createElement: function () { return null; } }, hooks: {} };
-  window.__HERMES_PLUGINS__ = { register: function () {} };
-</script>
-<script src="../hermes-plugin/dashboard/dist/index.js"></script>
-<script>
 (function () {
+  "use strict";
+  var params = new URLSearchParams(location.search);
+  var VIS_ONLY = params.get("vis") === "1";
+
   var STATES = ["idle", "listening", "transcribing", "thinking", "memory", "capability", "tool",
-    "delegating", "worker_progress", "speaking", "interrupted", "blocked", "error", "done"];
+    "delegating", "worker_progress", "speaking", "interrupted", "blocked", "error", "done", "offline"];
 
-  var canvas = document.getElementById("hz-canvas");
-  var vis = window.__JARVIS_VOICE_INTERNALS__.createVisualizer(canvas);
-  window.__hzVis = vis; // QA scripting hook (e.g. inject a worst-case audio stub)
-  var statusEl = document.getElementById("hz-status");
-  var current = "idle";
-
-  // ---- fake analyser source: synthesized speech envelope while "speaking".
-  // This is a HARNESS STUB standing in for audio-out.js getLevels(); in the
-  // real app these numbers come from an AnalyserNode on actually-played TTS.
-  var speaking = false;
-  function stubLevels() {
-    if (!speaking) return { level: 0, low: 0, mid: 0, high: 0 };
-    var t = performance.now() / 1000;
-    // syllable-ish bursts: two beat frequencies + occasional pauses
-    var syl = Math.max(0, Math.sin(t * 7.1)) * Math.max(0, Math.sin(t * 2.3 + 1.2));
-    var pause = (Math.sin(t * 0.53) > 0.85) ? 0.1 : 1;
-    var level = Math.min(1, (0.18 + syl * 0.75) * pause);
-    return { level: level, low: level * 0.8, mid: level * 0.6, high: level * 0.35 };
-  }
-  var analyserToggle = document.getElementById("hz-analyser");
-  function applyAudioMode() {
-    vis.setAudioSource(analyserToggle.checked ? stubLevels : null);
-  }
-  analyserToggle.addEventListener("change", applyAudioMode);
-  applyAudioMode();
-
-  // amp fallback feed (~30Hz), used when the analyser stub is off
-  setInterval(function () {
-    if (!speaking || analyserToggle.checked) return;
-    vis.onAmp(stubLevels().level);
-  }, 33);
-
-  // ---- fake WS: same event shapes app.js consumes
-  function handleEvent(msg) {
-    switch (msg.t) {
-      case "state":
-        current = msg.value;
-        speaking = msg.value === "speaking";
-        vis.setState(msg.value, msg.detail);
-        statusEl.textContent = msg.value;
-        markActive();
-        break;
-      case "tts.amp":
-        vis.onAmp(msg.v);
-        break;
-      case "memory.hits":
-        vis.onMemoryHits(msg.items || []);
-        break;
-    }
-  }
-
-  var SAMPLE_HITS = [
-    { path: "notes/projects/hermes.md", title: "Hermes architecture", score: 0.92 },
-    { path: "notes/daily/2026-07-27.md", title: "Daily note 2026-07-27", score: 0.78 },
-    { path: "notes/ref/jarvis-voice-spec.md", title: "Jarvis voice spec", score: 0.66 },
-    { path: "notes/ideas/orb-visualizer.md", title: "Orb visualizer ideas", score: 0.51 },
-    { path: "notes/ref/obsidian-sync.md", title: "Obsidian sync", score: 0.4 },
+  // ---------------- shared fake data ----------------
+  var MEM_HITS = [
+    { path: "vault/decisions/2026-06-memory-write-path.md", title: "Decision: memory write path", score: 0.91 },
+    { path: "vault/projects/jarvis-voice/index-refresh.md", title: "Vault index refresh runbook", score: 0.78 },
+    { path: "vault/daily/2026-07-24.md", title: "Daily note · 24 Jul", score: 0.64 },
   ];
+  var MEM_FULL = [
+    { path: "vault/decisions/2026-06-memory-write-path.md", title: "Decision: memory write path", score: 0.91, confidence: 0.86,
+      snippet: "Jarvis never writes to the vault directly. Proposals land in inbox/ as reviewed notes; the indexer picks them up on the next pass.",
+      updated: new Date(Date.now() - 12 * 864e5).toISOString(), conflict: false },
+    { path: "vault/projects/jarvis-voice/index-refresh.md", title: "Vault index refresh runbook", score: 0.78, confidence: 0.71,
+      snippet: "Refresh reconciles changed notes only. Full reindex is a separate command and takes ~9 min on the M4.",
+      updated: new Date(Date.now() - 3 * 864e5).toISOString(), conflict: false },
+    { path: "vault/daily/2026-07-24.md", title: "Daily note · 24 Jul", score: 0.64, confidence: 0.44,
+      snippet: "Said we'd move embeddings to batches of 12 — an older note still says 25. Needs reconciling.",
+      updated: new Date(Date.now() - 4 * 864e5).toISOString(), conflict: true },
+  ];
+  var now = Date.now();
+  var TASKS = [
+    { id: "tk_9f31", title: "Refresh vault index and reconcile 12 changed notes", status: "running", kind: "granite",
+      progress_note: "Embedding batch 7/12 · nomic-embed-text", created: new Date(now - 214e3).toISOString(), started: new Date(now - 214e3).toISOString(), session_id: "sess_01JQ8Z2W-granite-jarvis-voice" },
+    { id: "tk_8c07", title: "Run `sleep 25` in the terminal", status: "needs_review", kind: "granite",
+      result_summary: "jarvisd restarted; worker process lost. Output may be incomplete — re-delegate to confirm.", created: new Date(now - 1880e3).toISOString(), started: new Date(now - 1880e3).toISOString(), session_id: "sess_01JQ7YKM-granite-jarvis-voice" },
+    { id: "tk_7b52", title: "Create /tmp/jarvis-itest.txt with `itest-ok`", status: "done", kind: "granite",
+      result_summary: "File exists at /private/tmp/jarvis-itest.txt · artifact check passed.", created: new Date(now - 5240e3).toISOString(), started: new Date(now - 5240e3).toISOString(), finished: new Date(now - 5100e3).toISOString(), session_id: "sess_01JQ6RTP-granite-jarvis-voice" },
+    { id: "tk_6a18", title: "Summarise yesterday's meeting notes", status: "queued", kind: "codex",
+      progress_note: "Waiting on worker availability gate (codex-task.sh status).", created: new Date(now - 12e3).toISOString(), session_id: "" },
+  ];
+  var TASK_EVENTS = {
+    tk_9f31: [
+      { ts: new Date(now - 210e3).toISOString(), type: "status", payload: "delegate_task accepted → queued" },
+      { ts: new Date(now - 205e3).toISOString(), type: "spawn", payload: "hermes -p jarvis-voice -z … -t vault,fs" },
+      { ts: new Date(now - 140e3).toISOString(), type: "progress", payload: "12 changed notes detected" },
+      { ts: new Date(now - 20e3).toISOString(), type: "progress", payload: "embedding batch 7/12" },
+    ],
+    tk_8c07: [
+      { ts: new Date(now - 1870e3).toISOString(), type: "status", payload: "delegate_task accepted → running" },
+      { ts: new Date(now - 1760e3).toISOString(), type: "restart", payload: "jarvisd restart · pid 4412 orphaned" },
+      { ts: new Date(now - 1759e3).toISOString(), type: "needs_review", payload: "validation: no final text → needs_review" },
+    ],
+  };
+  var HEALTH = {
+    ok: true, version: "harness", uptime_s: 4212,
+    components: {
+      ollama: { ok: true, detail: "127.0.0.1:11434 · 3 models" },
+      stt: { ok: true, detail: "faster-whisper base.en int8 · warm" },
+      tts: { ok: true, detail: "kokoro-onnx am_michael · warm" },
+      db: { ok: true, detail: "jarvis.db WAL · 4 open tasks" },
+      mediator: { ok: true, detail: "gemma4:e4b-it-qat · keep_alive 30m" },
+    },
+    models: { mediator: { name: "gemma4:e4b-it-qat", resident: true }, worker: { name: "granite4.1-local-64k", resident: false } },
+    ram: { free_gb: 9.4, total_gb: 24 },
+  };
 
-  // ---- state buttons
+  // ================= VISUALIZER-ONLY MODE =================
+  if (VIS_ONLY) {
+    document.getElementById("hz-mount").innerHTML =
+      '<div style="position:relative;height:100%"><canvas id="hz-canvas" style="position:absolute;inset:0;width:100%;height:100%;display:block"></canvas></div>';
+    window.__HERMES_PLUGIN_SDK__ = { React: { createElement: function () { return null; } }, hooks: {} };
+    window.__HERMES_PLUGINS__ = { register: function () {} };
+    var s1 = document.createElement("script");
+    s1.src = "../hermes-plugin/dashboard/dist/index.js";
+    s1.onload = function () {
+      var vis = window.__JARVIS_VOICE_INTERNALS__.createVisualizer(document.getElementById("hz-canvas"));
+      window.__hzVis = vis;
+      var speaking = false;
+      function stubLevels() {
+        if (!speaking) return { level: 0, low: 0, mid: 0, high: 0 };
+        var t = performance.now() / 1000;
+        var syl = Math.max(0, Math.sin(t * 7.1)) * Math.max(0, Math.sin(t * 2.3 + 1.2));
+        var pause = Math.sin(t * 0.53) > 0.85 ? 0.1 : 1;
+        var level = Math.min(1, (0.18 + syl * 0.75) * pause);
+        return { level: level, low: level * 0.8, mid: level * 0.6, high: level * 0.35 };
+      }
+      vis.setAudioSource(stubLevels);
+      setInterval(function () { vis.onMicLevel(window.__hzMic || 0); }, 50);
+      var states = document.getElementById("hz-states");
+      STATES.forEach(function (st) {
+        var b = document.createElement("button");
+        b.textContent = st;
+        b.onclick = function () {
+          speaking = st === "speaking";
+          vis.setState(st);
+          if (st === "memory") vis.onMemoryHits(MEM_HITS);
+          document.getElementById("hz-status").textContent = st;
+          states.querySelectorAll("button").forEach(function (x) { x.classList.toggle("hz-on", x === b); });
+        };
+        states.appendChild(b);
+      });
+      var mic = document.createElement("label");
+      mic.innerHTML = 'mic <input type="range" min="0" max="100" value="0">';
+      mic.querySelector("input").oninput = function (e) { window.__hzMic = e.target.value / 100; };
+      states.appendChild(mic);
+      var rm = document.createElement("label");
+      rm.innerHTML = '<input type="checkbox"> reduced';
+      rm.querySelector("input").onchange = function (e) { vis.setReducedMotion(e.target.checked); };
+      states.appendChild(rm);
+      document.getElementById("hz-status").textContent = "vis-only";
+      if (params.get("state")) vis.setState(params.get("state"));
+    };
+    document.head.appendChild(s1);
+    return;
+  }
+
+  // ================= FULL-APP MODE =================
+
+  // ---- fake WebSocket (jarvisd feed) ----
+  var liveSocket = null;
+  var offline = false;
+  function FakeWebSocket(url) {
+    var self = this;
+    this.url = url;
+    this.readyState = 0;
+    this.binaryType = "blob";
+    setTimeout(function () {
+      if (offline) {
+        self.readyState = 3;
+        if (self.onclose) self.onclose({ code: 1006 });
+        return;
+      }
+      self.readyState = 1;
+      liveSocket = self;
+      if (self.onopen) self.onopen({});
+    }, 40);
+    this.send = function (data) {
+      if (typeof data !== "string") return; // mic PCM — ignore
+      var msg;
+      try { msg = JSON.parse(data); } catch (e) { return; }
+      if (msg.t === "ping") serverEvent({ t: "pong" });
+      if (msg.t === "turn.text") {
+        // echo a minimal mediator turn for typed input
+        setTimeout(function () { serverEvent({ t: "state", value: "thinking", turn_id: ++turnSeq }); }, 120);
+        setTimeout(function () { streamReply("Typed turn received — this harness echo proves the turn.text path renders."); }, 700);
+      }
+      if (msg.t === "barge_in") {
+        stopScript();
+        serverEvent({ t: "tts.end", ms_first_chunk: 262 });
+        serverEvent({ t: "state", value: "interrupted" });
+        setTimeout(function () { serverEvent({ t: "state", value: "idle" }); }, 700);
+      }
+      if (msg.t === "mic.start") serverEvent({ t: "state", value: "listening" });
+      if (msg.t === "mic.stop") serverEvent({ t: "state", value: "idle" });
+    };
+    this.close = function () {
+      self.readyState = 3;
+      if (liveSocket === self) liveSocket = null;
+      if (self.onclose) self.onclose({ code: 1000 });
+    };
+  }
+  FakeWebSocket.CONNECTING = 0; FakeWebSocket.OPEN = 1; FakeWebSocket.CLOSING = 2; FakeWebSocket.CLOSED = 3;
+  window.WebSocket = FakeWebSocket;
+
+  function serverEvent(msg) {
+    if (!liveSocket || liveSocket.readyState !== 1 || !liveSocket.onmessage) return;
+    liveSocket.onmessage({ data: JSON.stringify(msg) });
+  }
+
+  // ---- fake plugin API (fetch) ----
+  var realFetch = window.fetch ? window.fetch.bind(window) : null;
+  window.fetch = function (url, opts) {
+    var u = String(url);
+    function json(obj) {
+      return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve(obj); } });
+    }
+    if (u.indexOf("/api/plugins/jarvis-voice/") === -1) {
+      return realFetch ? realFetch(url, opts) : Promise.reject(new Error("no fetch"));
+    }
+    if (offline) return Promise.reject(new TypeError("Failed to fetch (harness offline)"));
+    if (u.indexOf("/health") >= 0) return json(HEALTH);
+    if (u.indexOf("/memory/search") >= 0) return json({ hits: MEM_FULL, card: "", budget_tokens: 600 });
+    if (/\/tasks\/[^/]+\/control$/.test(u)) {
+      var idc = u.match(/\/tasks\/([^/]+)\/control$/)[1];
+      var action = JSON.parse((opts && opts.body) || "{}").action;
+      var status = action === "pause" ? "paused" : action === "resume" ? "running" : "canceled";
+      setTimeout(function () {
+        serverEvent({ t: "task.update", id: decodeURIComponent(idc), status: status, title: (TASKS.find(function (t) { return t.id === decodeURIComponent(idc); }) || {}).title, kind: "granite", progress_note: "task_control(" + action + ") acknowledged by harness" });
+      }, 150);
+      return json({ ok: true, status: status });
+    }
+    if (/\/tasks\/[^/]+$/.test(u)) {
+      var id = decodeURIComponent(u.match(/\/tasks\/([^/]+)$/)[1]);
+      var task = TASKS.find(function (t) { return t.id === id; }) || {};
+      return json(Object.assign({}, task, { events: TASK_EVENTS[id] || [], result_text: id === "tk_7b52" ? "itest-ok\n(9 bytes written)" : "" }));
+    }
+    if (u.indexOf("/tasks") >= 0) return json({ tasks: TASKS });
+    return json({});
+  };
+
+  // ---- SDK stub + mount ----
+  var mount = document.getElementById("hz-mount");
+  function boot() {
+    window.__HERMES_PLUGIN_SDK__ = {
+      React: window.React,
+      hooks: {
+        useState: window.React.useState,
+        useEffect: window.React.useEffect,
+        useRef: window.React.useRef,
+        useMemo: window.React.useMemo,
+        useCallback: window.React.useCallback,
+      },
+    };
+    var registered = {};
+    window.__HERMES_PLUGINS__ = {
+      register: function (name, component) { registered[name] = component; },
+    };
+    var s = document.createElement("script");
+    s.src = "../hermes-plugin/dashboard/dist/index.js";
+    s.onload = function () {
+      var App = registered["jarvis-voice"];
+      if (!App) {
+        document.getElementById("hz-status").textContent = "register() not called!";
+        return;
+      }
+      var el = window.React.createElement(App);
+      if (window.ReactDOM.createRoot) window.ReactDOM.createRoot(mount).render(el);
+      else window.ReactDOM.render(el, mount);
+      document.getElementById("hz-status").textContent = "mounted";
+      afterMount();
+    };
+    document.head.appendChild(s);
+  }
+
+  // load React UMD (dev dependency) — file:// friendly
+  var r1 = document.createElement("script");
+  r1.src = "./node_modules/react/umd/react.production.min.js";
+  r1.onload = function () {
+    var r2 = document.createElement("script");
+    r2.src = "./node_modules/react-dom/umd/react-dom.production.min.js";
+    r2.onload = boot;
+    r2.onerror = fail;
+    document.head.appendChild(r2);
+  };
+  r1.onerror = fail;
+  function fail() {
+    document.getElementById("hz-status").textContent = "npm install first (React UMD missing)";
+  }
+  document.head.appendChild(r1);
+
+  // ---- state pills: send what the server would ----
+  var turnSeq = 8420;
+  var scriptTimers = [];
+  function at(ms, fn) { scriptTimers.push(setTimeout(fn, ms)); }
+  function stopScript() { scriptTimers.forEach(clearTimeout); scriptTimers = []; clearInterval(window.__hzAmpIv); }
+
+  function ampBurst(durMs) {
+    clearInterval(window.__hzAmpIv);
+    var t0 = performance.now();
+    window.__hzAmpIv = setInterval(function () {
+      var t = (performance.now() - t0) / 1000;
+      if (performance.now() - t0 > durMs) { clearInterval(window.__hzAmpIv); serverEvent({ t: "tts.amp", v: 0 }); return; }
+      var syl = Math.max(0, Math.sin(t * 7.1)) * Math.max(0, Math.sin(t * 2.3 + 1.2));
+      serverEvent({ t: "tts.amp", v: Math.min(1, 0.2 + syl * 0.7) });
+    }, 33);
+  }
+
+  var prevPill = null;
+  function gotoState(st) {
+    stopScript();
+    if (st === "offline") { setOffline(true); return; }
+    if (offline) setOffline(false);
+    if (st === "memory") serverEvent({ t: "memory.hits", items: MEM_HITS });
+    if (st === "tool") serverEvent({ t: "meta_tool", name: "memory_recall", phase: "start", args: { query: "…" } });
+    else if (prevPill === "tool") serverEvent({ t: "meta_tool", name: "memory_recall", phase: "end", ms: 214 });
+    prevPill = st;
+    if (st === "transcribing") serverEvent({ t: "stt.partial", text: "so what did we decide about the memory write path" });
+    if (st === "speaking") {
+      serverEvent({ t: "mediator.delta", text: "Granite is on the index refresh now, batch seven of twelve." });
+      serverEvent({ t: "tts.start", text: "Granite is on the index refresh now, batch seven of twelve." });
+      ampBurst(3600);
+    }
+    if (st === "error") serverEvent({ t: "error", message: "Ollama stream reset mid-turn · retrying with backoff", recoverable: true });
+    serverEvent({ t: "state", value: st, turn_id: turnSeq });
+  }
+
   var statesEl = document.getElementById("hz-states");
-  STATES.forEach(function (s) {
+  STATES.forEach(function (st) {
     var b = document.createElement("button");
-    b.textContent = s;
-    b.dataset.state = s;
-    b.addEventListener("click", function () {
-      stopDemo();
-      handleEvent({ t: "state", value: s });
-      if (s === "memory") handleEvent({ t: "memory.hits", items: SAMPLE_HITS });
-    });
+    b.textContent = st;
+    b.dataset.state = st;
+    b.onclick = function () {
+      gotoState(st);
+      statesEl.querySelectorAll("button").forEach(function (x) { x.classList.toggle("hz-on", x === b); });
+    };
     statesEl.appendChild(b);
   });
-  function markActive() {
-    statesEl.querySelectorAll("button").forEach(function (b) {
-      b.classList.toggle("hz-on", b.dataset.state === current);
+
+  // ---- scripted full turn (same beats as the prototype's runTurn) ----
+  var REPLY = "We settled on write-through the reviewed inbox only — nothing touches the vault directly. Granite is on the index refresh now, batch seven of twelve. I'll tell you when it validates, not when it starts.";
+  function runTurn() {
+    stopScript();
+    turnSeq++;
+    serverEvent({ t: "state", value: "listening", turn_id: turnSeq });
+    at(300, function () { serverEvent({ t: "stt.partial", text: "so what did we" }); });
+    at(1000, function () { serverEvent({ t: "stt.partial", text: "so what did we decide about the memory write" }); });
+    at(1700, function () { serverEvent({ t: "stt.partial", text: "so what did we decide about the memory write path, and where's the index refresh" }); });
+    at(2400, function () {
+      serverEvent({ t: "state", value: "transcribing", turn_id: turnSeq });
+      serverEvent({ t: "stt.final", text: "So what did we decide about the memory write path, and where's the index refresh?", ms: 366 });
+      serverEvent({ t: "latency", stage: "stt", ms: 366 });
+    });
+    at(2950, function () { serverEvent({ t: "state", value: "thinking", turn_id: turnSeq }); });
+    at(3500, function () {
+      serverEvent({ t: "state", value: "memory", turn_id: turnSeq });
+      serverEvent({ t: "meta_tool", name: "memory_recall", phase: "start", args: { query: "memory write path decision" } });
+    });
+    at(4300, function () {
+      serverEvent({ t: "meta_tool", name: "memory_recall", phase: "end", ms: 214, result_summary: "3 hits (1 conflict)" });
+      serverEvent({ t: "memory.hits", items: MEM_HITS });
+    });
+    at(4600, function () {
+      serverEvent({ t: "state", value: "capability", turn_id: turnSeq });
+      serverEvent({ t: "meta_tool", name: "capability_search", phase: "start", args: { query: "index refresh status" } });
+    });
+    at(5200, function () { serverEvent({ t: "meta_tool", name: "capability_search", phase: "end", ms: 63, result_summary: "task_status, delegate_task, quick_action" }); });
+    at(5400, function () {
+      serverEvent({ t: "state", value: "tool", detail: "task_status", turn_id: turnSeq });
+      serverEvent({ t: "meta_tool", name: "task_status", phase: "start", args: { task_id: "" } });
+    });
+    at(6300, function () {
+      serverEvent({ t: "meta_tool", name: "task_status", phase: "end", ms: 44, result_summary: "tk_9f31 running, tk_8c07 needs_review" });
+      serverEvent({ t: "state", value: "thinking", turn_id: turnSeq });
+    });
+    at(6900, function () {
+      serverEvent({ t: "state", value: "speaking", turn_id: turnSeq });
+      serverEvent({ t: "latency", stage: "mediator_first_token", ms: 612 });
+      streamReply(REPLY, true);
     });
   }
-
-  document.getElementById("hz-memory").addEventListener("click", function () {
-    handleEvent({ t: "memory.hits", items: SAMPLE_HITS });
-  });
-
-  // ---- mic slider -> onMicLevel at ~20Hz with a little natural wobble
-  var micSlider = document.getElementById("hz-mic");
-  setInterval(function () {
-    var v = micSlider.value / 100;
-    if (v > 0) vis.onMicLevel(v * (0.75 + 0.25 * Math.random()));
-  }, 50);
-
-  // ---- reduced motion / context loss
-  document.getElementById("hz-reduced").addEventListener("change", function (e) {
-    vis.setReducedMotion(e.target.checked);
-  });
-  document.getElementById("hz-losectx").addEventListener("click", function () {
-    var gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
-    var ext = gl && gl.getExtension("WEBGL_lose_context");
-    if (!ext) return;
-    ext.loseContext();
-    setTimeout(function () { ext.restoreContext(); }, 1500);
-  });
-
-  // ---- scripted auto demo (full pipeline pass)
-  var SCRIPT = [
-    ["idle", 2000],
-    ["listening", 3000],
-    ["transcribing", 1800],
-    ["thinking", 3000],
-    ["memory", 2500, function () { handleEvent({ t: "memory.hits", items: SAMPLE_HITS }); }],
-    ["thinking", 2000],
-    ["capability", 1800],
-    ["tool", 2200],
-    ["delegating", 2600],
-    ["worker_progress", 3000],
-    ["speaking", 4500],
-    ["interrupted", 1400],
-    ["speaking", 2500],
-    ["done", 1800],
-    ["idle", 1500],
-  ];
-  var demoTimer = null;
-  var demoBtn = document.getElementById("hz-demo");
-  function stopDemo() {
-    if (demoTimer) { clearTimeout(demoTimer); demoTimer = null; }
-    demoBtn.textContent = "▶ auto demo";
+  function streamReply(reply, full) {
+    var sentences = reply.match(/[^.]+\.?/g) || [reply];
+    var words = reply.split(" ");
+    var i = 0;
+    var si = 0;
+    serverEvent({ t: "tts.start", text: sentences[0].trim() });
+    serverEvent({ t: "latency", stage: "tts_first_chunk", ms: 262 });
+    serverEvent({ t: "latency", stage: "e2e_first_audio", ms: 1420 });
+    ampBurst(words.length * 110 + 800);
+    var iv = setInterval(function () {
+      i += 2;
+      serverEvent({ t: "mediator.delta", text: (i > 2 ? " " : "") + words.slice(Math.max(0, i - 2), i).join(" ") });
+      var spoken = Math.min(sentences.length - 1, Math.floor((i / words.length) * sentences.length));
+      if (spoken > si) { si = spoken; serverEvent({ t: "tts.start", text: sentences[si].trim() }); }
+      if (i >= words.length) {
+        clearInterval(iv);
+        serverEvent({ t: "mediator.done", text: reply, ms_first_token: 612, ms_total: 2140 });
+        at(1200, function () {
+          serverEvent({ t: "tts.end", ms_first_chunk: 262 });
+          serverEvent({ t: "state", value: "done", turn_id: turnSeq });
+          at(900, function () { serverEvent({ t: "state", value: "idle", turn_id: turnSeq }); });
+        });
+      }
+    }, 110);
+    scriptTimers.push(iv);
   }
-  function runDemo(idx) {
-    if (idx >= SCRIPT.length) { stopDemo(); return; }
-    var step = SCRIPT[idx];
-    handleEvent({ t: "state", value: step[0] });
-    if (step[2]) step[2]();
-    demoTimer = setTimeout(function () { runDemo(idx + 1); }, step[1]);
-  }
-  demoBtn.addEventListener("click", function () {
-    if (demoTimer) { stopDemo(); return; }
-    demoBtn.textContent = "■ stop demo";
-    runDemo(0);
-  });
+  document.getElementById("hz-turn").onclick = runTurn;
+  document.getElementById("hz-memory").onclick = function () { serverEvent({ t: "memory.hits", items: MEM_HITS }); };
+  document.getElementById("hz-task").onclick = function () {
+    serverEvent({ t: "task.update", id: "tk_9f31", status: "running", title: TASKS[0].title, kind: "granite", progress_note: "embedding batch " + (8 + Math.floor(Math.random() * 4)) + "/12" });
+  };
 
-  // ---- query params: ?state=thinking / ?demo=1
-  var params = new URLSearchParams(location.search);
-  if (params.get("state")) {
-    handleEvent({ t: "state", value: params.get("state") });
-    if (params.get("state") === "memory") handleEvent({ t: "memory.hits", items: SAMPLE_HITS });
+  // ---- offline toggle ----
+  var offBtn = document.getElementById("hz-offline");
+  function setOffline(v) {
+    offline = v;
+    offBtn.textContent = v ? "back online" : "go offline";
+    offBtn.classList.toggle("hz-on", v);
+    if (v && liveSocket) liveSocket.close();
   }
-  if (params.get("demo") === "1") {
-    demoBtn.textContent = "■ stop demo";
-    runDemo(0);
+  offBtn.onclick = function () { setOffline(!offline); };
+
+  // ---- width presets ----
+  document.querySelectorAll("[data-w]").forEach(function (b) {
+    b.onclick = function () {
+      mount.style.width = b.dataset.w === "fit" ? "100%" : b.dataset.w + "px";
+      document.querySelectorAll("[data-w]").forEach(function (x) { x.classList.toggle("hz-on", x === b); });
+    };
+  });
+  document.getElementById("hz-hide").onclick = function () {
+    var p = document.getElementById("hz-panel");
+    var min = p.classList.toggle("hz-min");
+    Array.prototype.forEach.call(p.children, function (c) {
+      if (c.id !== "hz-hide") c.style.display = min ? "none" : "";
+    });
+  };
+
+  function afterMount() {
+    if (params.get("w")) {
+      var btn = document.querySelector('[data-w="' + params.get("w") + '"]');
+      if (btn) btn.click();
+    }
+    if (params.get("state")) setTimeout(function () { gotoState(params.get("state")); }, 400);
+    if (params.get("demo") === "1") setTimeout(runTurn, 600);
   }
 })();
 </script>

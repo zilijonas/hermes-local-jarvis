@@ -1,0 +1,64 @@
+/* input.css — Tailwind CSS v4 entry (CSS-first config, no JS config file).
+ *
+ * Deliberately does NOT `@import "tailwindcss"`:
+ *   - no preflight (its bare `*`/`html`/`body` resets would leak into the
+ *     host dashboard),
+ *   - no default theme (we map ONLY the jv design tokens below, so nothing
+ *     outside the design system can even be expressed),
+ *   - no cascade layers (unlayered host CSS would beat layered plugin CSS).
+ * Only the used-utilities output of `@tailwind utilities;` is emitted, and
+ * build.sh pipes it through scope-css.mjs which prefixes every selector with
+ * `#jarvis-voice-root` — the final stylesheet contains no bare global
+ * selectors (verified at build time).
+ *
+ * `@theme inline` (not plain `@theme`) makes utilities reference the
+ * `var(--jv-*)` runtime tokens directly instead of emitting `:root { ... }`
+ * theme variables — nothing lands on :root.
+ */
+@source "./";
+
+@theme inline {
+  /* spacing: 4px base — p-1..p-8 = 4/8/12/16/20/24/28/32px */
+  --spacing: 4px;
+
+  /* colors ← tokens.css (scoped under #jarvis-voice-root) */
+  --color-*: initial;
+  --color-bg: var(--jv-bg);
+  --color-surface: var(--jv-surface);
+  --color-surface-2: var(--jv-surface-2);
+  --color-line: var(--jv-line);
+  --color-line-strong: var(--jv-line-strong);
+  --color-text: var(--jv-text);
+  --color-dim: var(--jv-text-dim);
+  --color-faint: var(--jv-text-faint);
+  --color-micro: var(--jv-text-micro);
+  --color-ghost: var(--jv-text-ghost); /* hairlines only, never text */
+  --color-accent: var(--jv-accent);
+  --color-accent-soft: var(--jv-accent-soft);
+  --color-accent-deep: var(--jv-accent-deep);
+  --color-warn: var(--jv-warn);
+  --color-danger: var(--jv-danger);
+  --color-ok: var(--jv-ok);
+
+  /* radius */
+  --radius-*: initial;
+  --radius-sm: 5px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+
+  /* elevation */
+  --shadow-*: initial;
+  --shadow-e1: var(--jv-e-1);
+  --shadow-e2: var(--jv-e-2);
+  --shadow-bloom: var(--jv-bloom);
+
+  /* motion */
+  --ease-jv: var(--jv-ease);
+
+  /* type */
+  --font-*: initial;
+  --font-sans: var(--jv-font);
+  --font-mono: var(--jv-mono);
+}
+
+@tailwind utilities;

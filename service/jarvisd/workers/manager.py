@@ -46,6 +46,11 @@ class WorkerManager:
         self.procs: dict[str, subprocess.Popen] = {}
         self.on_outcome: Optional[Callable[[str, bool], None]] = None  # capability feedback
         self.on_task_event: Optional[Callable[[dict], None]] = None    # pipeline hook
+        # Loading granite evicts the mediator on this 24 GB box. If a worker starts
+        # while a voice turn is mid-flight, gemma dies right before it must speak
+        # (the "lost my train of thought" class). Pipeline sets this to an awaitable
+        # that resolves when no turn is active.
+        self.wait_turn_clear: Optional[Callable[[], "asyncio.Future"]] = None
 
     # ---------------------------------------------------------------- boot
     def reconcile_on_boot(self) -> int:
@@ -136,6 +141,13 @@ class WorkerManager:
             t = self.db.get_task(task_id)
             if not t or t["status"] != "queued":
                 return
+            if self.wait_turn_clear is not None:
+                try:  # don't stall forever if the pipeline wedges — 25 s cap
+                    await asyncio.wait_for(self.wait_turn_clear(), timeout=25.0)
+                except (asyncio.TimeoutError, Exception):
+                    pass
+                if self.db.get_task(task_id)["status"] != "queued":
+                    return  # canceled while waiting
             try:
                 if t["kind"] == "codex":
                     await self._run_codex(t)
@@ -160,8 +172,10 @@ class WorkerManager:
                if not re.search(r"(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", k, re.I)}
         env["HERMES_HOME"] = os.path.expanduser(f"~/.hermes/profiles/{PROFILE}")
 
+        workspace = os.path.expanduser(f"~/.hermes/profiles/{PROFILE}/workspace")
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, start_new_session=True, env=env)
+                                text=True, start_new_session=True, env=env,
+                                cwd=workspace if os.path.isdir(workspace) else None)
         self.procs[task_id] = proc
         self.db.update_task(task_id, status="running", started=time.time(), pid=proc.pid)
         self._emit(task_id, note="granite worker started")

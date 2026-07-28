@@ -48,7 +48,16 @@ class Pipeline:
         self._speaking = False
         self._turn_lock = asyncio.Lock()
         self._loop = asyncio.get_event_loop()
+        self._announce_queue: list[str] = []
+        self._turn_active = False
         workers.on_task_event = self._on_task_event  # optional hook
+        workers.wait_turn_clear = self._wait_turn_clear
+
+    async def _wait_turn_clear(self) -> None:
+        """Workers hold their (mediator-evicting) model load until no voice turn
+        is mid-flight, so gemma never dies right before it must speak."""
+        while self._turn_active or self._speaking:
+            await asyncio.sleep(0.25)
 
     # ------------------------------------------------------------- states
     def _set_state(self, value: str, detail: str = "", turn_id: str = "") -> None:
@@ -68,6 +77,9 @@ class Pipeline:
         if self._speaking:
             self.barge_in("mic reopened")
         self._set_state("listening")
+        # Pre-warm the mediator while the user is still talking: if a worker run
+        # evicted gemma, the ~6 s reload happens under the utterance, not after it.
+        asyncio.get_running_loop().create_task(self.mediator.warmup())
 
     def mic_stop(self) -> None:
         """PTT release: whatever is buffered becomes the utterance."""
@@ -84,7 +96,9 @@ class Pipeline:
             return
         for kind, payload in self.vad.feed(chunk):
             if kind == "speech_start":
-                if self._speaking:
+                # Interrupt whatever Jarvis is doing — speaking OR still thinking.
+                # Talking over a person mid-thought redirects them; same here.
+                if self._speaking or (self._turn_task and not self._turn_task.done()):
                     self.barge_in("voice detected")
             elif kind == "chunk":
                 self._utt_buf.extend(payload)
@@ -191,6 +205,7 @@ class Pipeline:
         async with self._turn_lock:
             turn_id = turn_id or f"t{int(time.time() * 1000) % 10 ** 10}"
             t_endpoint = t_endpoint or time.monotonic()
+            self._turn_active = True
             self._set_state("thinking", turn_id=turn_id)
 
             sentence_q: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -227,6 +242,7 @@ class Pipeline:
                     text, tools=self._dispatch_meta_tool,
                     on_delta=on_delta, on_tool=on_tool, cancel=self._tts_cancel)
             except asyncio.CancelledError:
+                self.mediator.note_interrupted(text)
                 sentence_q.put_nowait(None)
                 await asyncio.gather(speak_task, return_exceptions=True)
                 raise
@@ -235,6 +251,8 @@ class Pipeline:
                 sentence_q.put_nowait(None)
                 await asyncio.gather(speak_task, return_exceptions=True)
                 return {"reply_text": "", "error": str(e), "turn_id": turn_id}
+            finally:
+                self._turn_active = False
 
             if sent_buf.strip():
                 sentence_q.put_nowait(sent_buf.strip())
@@ -250,6 +268,7 @@ class Pipeline:
             if self.state not in ("interrupted", "error", "blocked"):
                 self._set_state("done", turn_id=turn_id)
                 self._set_state("idle")
+            self._drain_announcements()
             return {"reply_text": result["text"],
                     "actions": [c["name"] for c in result["tool_calls"]],
                     "turn_id": turn_id}
@@ -280,9 +299,19 @@ class Pipeline:
                 loop.call_soon_threadsafe(
                     self.bus.publish, {"t": "tts.amp", "v": round(v, 3)})
 
-            stats = await self.tts.speak(sentence, on_chunk=on_chunk, on_amp=on_amp,
-                                         voice=self.cfg.tts.voice, speed=self.cfg.tts.speed,
-                                         cancel_event=cancel)
+            try:
+                stats = await self.tts.speak(sentence, on_chunk=on_chunk, on_amp=on_amp,
+                                             voice=self.cfg.tts.voice, speed=self.cfg.tts.speed,
+                                             cancel_event=cancel)
+            except Exception as e:  # noqa: BLE001 — a TTS failure must never mute the reply
+                self.bus.publish({"t": "error", "message": f"tts failed: {e}",
+                                  "recoverable": True})
+                try:
+                    stats = await asyncio.get_running_loop().run_in_executor(
+                        None, lambda: self.tts.say_fallback(sentence, on_chunk, on_amp,
+                                                            cancel_event=cancel))
+                except Exception:
+                    stats = {"ms_first_chunk": 0}
             if first:
                 e2e = (time.monotonic() - t_endpoint) * 1000
                 self.bus.publish({"t": "latency", "stage": "e2e_first_audio",
@@ -422,15 +451,25 @@ class Pipeline:
         # A granite worker run usually evicted gemma (24 GB box can't hold both) —
         # re-warm the mediator now so the next voice turn isn't a 6 s cold load.
         asyncio.get_running_loop().create_task(self.mediator.warmup())
-        if task.get("status") in ("done", "failed", "needs_review") and not self._speaking:
+        if task.get("status") in ("done", "failed", "needs_review"):
             summary = task.get("result_summary") or ""
             verdict = {"done": "finished", "failed": "failed",
                        "needs_review": "finished but needs your review"}[task["status"]]
             text = f"Task update: {task.get('title', 'a task')} {verdict}. {summary[:160]}"
             asyncio.get_running_loop().create_task(self._announce(text))
 
+    def _drain_announcements(self) -> None:
+        """Speak queued announcements once the floor is free (never drop them)."""
+        if self._announce_queue and not self._speaking and self.state in ("idle", "done"):
+            text = self._announce_queue.pop(0)
+            asyncio.get_running_loop().create_task(self._announce(text))
+
     async def _announce(self, text: str) -> None:
-        if self._speaking or self.state not in ("idle", "done"):
+        if self._speaking or self._turn_active or self.state not in ("idle", "done"):
+            # Busy — queue instead of dropping; drained at end of the current turn.
+            self._announce_queue.append(text)
+            if len(self._announce_queue) > 5:
+                self._announce_queue = self._announce_queue[-5:]
             return
         # Same lock as run_turn: an announcement must never race a live turn's
         # _tts_cancel/_speaking state (empty-reply hazard seen in quality battery).
@@ -452,6 +491,7 @@ class Pipeline:
                              cancel_event=self._tts_cancel)
         self._speaking = False
         self._set_state("idle")
+        self._drain_announcements()
 
     def component_status(self) -> dict[str, Any]:
         return {"ok": True, "detail": f"state={self.state} mode={self.mode}"}

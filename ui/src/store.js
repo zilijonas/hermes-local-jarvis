@@ -58,6 +58,8 @@ export function pushCapped(arr, item, max) {
 
 // Rolling p50/p95 tracker per named latency stage (e2e_first_audio, stt,
 // mediator_first_token, ...) fed by `latency` events per docs/SPEC.md.
+// series(stage) exposes the raw rolling window for the System tab's
+// per-stage sparklines (client-side buffer, no server round-trip).
 export function createLatencyTracker(windowSize) {
   var size = windowSize || 20;
   var samples = {};
@@ -66,6 +68,9 @@ export function createLatencyTracker(windowSize) {
     var arr = (samples[stage] || []).concat([ms]);
     if (arr.length > size) arr = arr.slice(arr.length - size);
     samples[stage] = arr;
+  }
+  function series(stage) {
+    return samples[stage] || [];
   }
   function percentile(stage, p) {
     var arr = samples[stage];
@@ -87,5 +92,5 @@ export function createLatencyTracker(windowSize) {
     });
     return out;
   }
-  return { record: record, summary: summary };
+  return { record: record, summary: summary, series: series };
 }

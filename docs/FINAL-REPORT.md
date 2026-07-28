@@ -1,4 +1,27 @@
-# Jarvis Voice — Final Delivery Report (2026-07-27, fixes round 2026-07-28)
+# Jarvis Voice — Final Delivery Report (2026-07-27, fixes 2026-07-28, redesign 2026-07-28)
+
+## Command Centre redesign + conversation hardening (2026-07-28, round 2)
+UI fully rebuilt to the claude.ai/design "Jarvis Command Centre" prototype (design/
+holds the pulled artifacts): anchored-core three-column layout (SystemBar · Memory ·
+Stage · Work/Activity/System tabs), 2D fibonacci-lattice intelligence core replacing
+three.js (bundle 581→75 KB raw), 15 state choreographies with exp-blend transitions,
+per-turn waterfall, role-guttered conversation log with spoken-sentence highlight,
+status-weighted task cards, memory column with vault search + enriched hit cards,
+Tailwind v4 (scoped; build fails on any selector leak), responsive 1280/860 breakpoints
++ mobile bottom sheets, reduced-motion static mode, keyboard map (Space/Esc/1·2·3/⌘K).
+Verified live on the shared dashboard at 1728/1106 widths + harness at 1440/1024/390.
+
+Conversation-quality hardening (all verified live):
+- Workers hold model load until the voice turn finishes (was evicting gemma mid-turn —
+  the "lost my train of thought" root cause); mediator also pre-warms on mic.start
+  and re-warms after each task.
+- Empty completions retry once silently before any apology.
+- Task announcements queue and drain when the floor is free (never dropped/unspoken).
+- Speech during *thinking* interrupts naturally; interrupted turns keep honest history
+  ("[the user interrupted before I answered]") so follow-ups have context.
+- TTS failure falls back to `say` — a reply can no longer be silently muted.
+- Worker cwd pinned to the profile workspace (predictable relative paths).
+
 
 ## Fixes round (user feedback, 2026-07-28)
 1. **Full-bleed layout**: host wrapper padding neutralized via `:has(#jarvis-voice-root)`

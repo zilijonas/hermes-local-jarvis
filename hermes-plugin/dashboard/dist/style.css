@@ -1,56 +1,96 @@
-/* jarvis-voice dashboard plugin — real UI styles.
- * Single dark, full-height, professional layout. All colors are CSS custom
- * properties scoped under .jv-root so the plugin never leaks variables into
- * the host dashboard's global scope. See ui/README.md for the file map. */
+/* tokens.css — Jarvis Command Centre design tokens.
+ *
+ * SCOPED UNDER #jarvis-voice-root ONLY (never :root): the plugin mounts
+ * inside the Hermes dashboard SPA and must not leak variables into the host
+ * page. Every color below is ported 1:1 from the design prototype
+ * (design/"Jarvis Command Centre.dc.html") / the binding redesign spec.
+ *
+ * Contrast notes (against --jv-bg #070A0C / --jv-surface #0B1114):
+ *   --jv-text        #E8F4F6  ~17.5:1  body text            (AA/AAA)
+ *   --jv-text-dim    #9FB6BA   ~8.7:1  secondary text       (AA/AAA)
+ *   --jv-text-faint  #8FA3A8   ~7.2:1  tertiary/labels      (AA)
+ *   --jv-text-micro  #6E858A   ~4.8:1  micro-labels ≥9px    (AA large-ish; used
+ *                                       for uppercase tracked micro type only)
+ *   --jv-text-ghost  #46595E   ~2.4:1  HAIRLINES ONLY — never use for text.
+ *   --jv-accent      #4FE3E0  ~11.5:1  accent text/icons    (AA/AAA)
+ *   --jv-warn        #F2B35C  ~10.2:1  warning text         (AA/AAA)
+ *   --jv-danger      #FF6B6B   ~6.6:1  danger text          (AA)
+ *   --jv-ok          #68EAD0  ~12.8:1  success text         (AA/AAA)
+ */
+#jarvis-voice-root {
+  /* surfaces */
+  --jv-bg: #070A0C;
+  --jv-surface: #0B1114;
+  --jv-surface-2: #101A1E;
+  --jv-line: rgba(120, 190, 200, 0.12);
+  --jv-line-strong: rgba(120, 190, 200, 0.22);
 
-.jv-root {
-  --jv-bg: #0b0b0f;
-  --jv-bg-elevated: #131318;
-  --jv-panel-bg: #15151b;
-  --jv-border: #26262f;
-  --jv-fg: #e5e7eb;
-  --jv-fg-dim: #9ca3af;
-  --jv-fg-faint: #6b7280;
+  /* type */
+  --jv-text: #E8F4F6;
+  --jv-text-dim: #9FB6BA;
+  --jv-text-faint: #8FA3A8;
+  --jv-text-micro: #6E858A;
+  --jv-text-ghost: #46595E; /* hairlines only, never text */
 
-  --jv-accent-cyan: #22d3ee;
-  --jv-accent-purple: #a78bfa;
-  --jv-accent-amber: #fbbf24;
-  --jv-accent-red: #f87171;
-  --jv-accent-green: #34d399;
+  /* accent + status */
+  --jv-accent: #4FE3E0;
+  --jv-accent-soft: #9DF0EC;
+  --jv-accent-deep: #1E7C7E;
+  --jv-warn: #F2B35C;
+  --jv-danger: #FF6B6B;
+  --jv-ok: #68EAD0;
 
-  --jv-ok: #16a34a;
-  --jv-warn: #d97706;
-  --jv-danger: #dc2626;
-  --jv-info: #38bdf8;
+  /* spacing — 4px base scale */
+  --jv-1: 4px;
+  --jv-2: 8px;
+  --jv-3: 12px;
+  --jv-4: 16px;
+  --jv-5: 22px;
+  --jv-6: 32px;
 
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  height: 100%;
-  min-height: 0;
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--jv-bg);
-  color: var(--jv-fg);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  overflow: hidden;
+  /* radius */
+  --jv-r-sm: 5px;
+  --jv-r-md: 9px;
+  --jv-r-lg: 12px;
+
+  /* elevation */
+  --jv-e-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+  --jv-e-2: 0 18px 40px rgba(0, 0, 0, 0.45);
+  --jv-bloom: 0 0 12px 2px rgba(79, 227, 224, 0.45);
+
+  /* motion */
+  --jv-fast: 120ms;
+  --jv-base: 220ms;
+  --jv-slow: 340ms;
+  --jv-ease: cubic-bezier(0.2, 0.7, 0.25, 1);
+  --jv-core-blend: 95ms; /* intelligence-core exponential blend time constant */
+
+  /* type stacks (prototype) */
+  --jv-font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --jv-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.jv-root * {
-  box-sizing: border-box;
-}
+/* jarvis-voice dashboard plugin — hand-written style layer.
+ *
+ * This file carries only what Tailwind utilities can't express well:
+ * the root skeleton, the host-integration neutraliser, a scoped mini-reset,
+ * scrollbars, keyframes, canvas positioning, focus rings and the few
+ * animation classes. Components style themselves with Tailwind utilities
+ * (compiled from src/input.css); build.sh concatenates
+ * tokens.css + this file + the scoped utilities into dist/style.css and
+ * verifies no bare global selectors survive (scope-css.mjs prefixes every
+ * selector that doesn't already contain #jarvis-voice-root).
+ */
 
-/* ---------- host integration ----------
+/* ---------- host integration (KEEP VERBATIM) ----------
  * The Hermes dashboard host mounts this plugin inside a wrapper div that
  * carries Tailwind utility padding we cannot edit (host SPA is out of
  * scope): classes include "... flex min-w-0 min-h-0 flex-1 flex-col px-3
  * sm:px-6 pt-2 sm:pt-4 lg:pt-6". That padding ate into our full-bleed
- * canvas/layout and (combined with .jv-root's old `min-height: 100vh`
- * above) was the direct cause of document-level scrolling on the /jarvis
- * tab. Target *only* the wrapper that directly contains our root element
- * id — the :has(> #jarvis-voice-root) guard means this can never restyle
- * any other host page or plugin, no matter how loosely the left-hand class
- * selector is written. */
+ * canvas/layout and was the direct cause of document-level scrolling on the
+ * /jarvis tab. Target *only* the wrapper that directly contains our root
+ * element id — the :has(> #jarvis-voice-root) guard means this can never
+ * restyle any other host page or plugin, no matter how loosely the
+ * left-hand class selector is written. */
 div.flex-1.flex-col:has(> #jarvis-voice-root),
 div:has(> #jarvis-voice-root) {
   padding: 0 !important;
@@ -81,592 +121,162 @@ div:has(> #jarvis-voice-root) {
   }
 }
 
-/* ---------- header ---------- */
-.jv-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.75rem 1.25rem;
-  border-bottom: 1px solid var(--jv-border);
-  flex: none;
-}
-.jv-header-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-  letter-spacing: 0.3em;
-  color: var(--jv-fg);
-}
-.jv-header-right {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-.jv-icon-btn {
-  background: transparent;
-  border: 1px solid var(--jv-border);
-  color: var(--jv-fg-dim);
-  border-radius: 0.5rem;
-  width: 2rem;
-  height: 2rem;
-  cursor: pointer;
-  font-size: 1rem;
-}
-.jv-icon-btn:hover {
-  color: var(--jv-fg);
-  border-color: var(--jv-fg-faint);
-}
-
-/* ---------- badges / chips ---------- */
-.jv-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--jv-border);
-  color: var(--jv-fg-dim);
-}
-.jv-badge-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: currentColor;
-}
-.jv-badge--ok {
-  color: var(--jv-ok);
-}
-.jv-badge--info {
-  color: var(--jv-info);
-}
-.jv-badge--warn {
-  color: var(--jv-warn);
-}
-
-.jv-chip {
-  display: inline-block;
-  font-size: 0.7rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  border: 1px solid var(--jv-border);
-  color: var(--jv-fg-dim);
-  white-space: nowrap;
-}
-.jv-chip--running {
-  color: var(--jv-info);
-  border-color: var(--jv-info);
-}
-.jv-chip--queued {
-  color: var(--jv-fg-dim);
-}
-.jv-chip--paused {
-  color: var(--jv-warn);
-  border-color: var(--jv-warn);
-}
-.jv-chip--done {
-  color: var(--jv-ok);
-  border-color: var(--jv-ok);
-}
-.jv-chip--failed {
-  color: var(--jv-danger);
-  border-color: var(--jv-danger);
-}
-.jv-chip--canceled {
-  color: var(--jv-fg-faint);
-}
-.jv-chip--needs_review {
-  color: var(--jv-accent-amber);
-  border-color: var(--jv-accent-amber);
-}
-
-/* ---------- layout ---------- */
-.jv-body {
-  flex: 1 1 auto;
-  display: flex;
-  min-height: 0;
-}
-.jv-stage {
-  flex: 1 1 auto;
+/* ---------- root skeleton ---------- */
+#jarvis-voice-root {
+  position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  min-width: 0;
-  min-height: 0;
-  padding: 1rem 1.5rem 0.5rem;
-  position: relative;
-}
-.jv-stage-canvas-wrap {
-  width: 100%;
   flex: 1 1 auto;
+  height: 100%;
   min-height: 0;
-  position: relative;
-}
-.jv-canvas {
-  position: absolute;
-  inset: 0;
   width: 100%;
-  height: 100%;
-  display: block;
+  overflow: hidden; /* no document scroll at any size — panels scroll inside */
+  box-sizing: border-box;
+  background: radial-gradient(120% 90% at 50% 0%, #0a1216 0%, var(--jv-bg) 55%, #05080a 100%);
+  color: var(--jv-text);
+  font-family: var(--jv-font);
+  -webkit-font-smoothing: antialiased;
 }
-/* Subtle depth vignette behind the WebGL orb (renderer clears transparent) */
-.jv-stage-canvas-wrap::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(ellipse 60% 50% at 50% 46%, rgba(34, 211, 238, 0.055), rgba(11, 11, 15, 0) 70%);
-}
-/* Reduced-motion mode: static orb + text state (visualizer/index.js) */
-.jv-vis-static-label {
-  position: absolute;
-  left: 50%;
-  bottom: 10%;
-  transform: translateX(-50%);
-  font-size: 0.78rem;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--jv-fg-dim);
-  pointer-events: none;
-  display: none;
-}
-.jv-vis-static-label--visible {
-  display: block;
+#jarvis-voice-root *,
+#jarvis-voice-root *::before,
+#jarvis-voice-root *::after {
+  box-sizing: border-box;
 }
 
-/* ---------- PTT ---------- */
-.jv-ptt-area {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: -4rem;
-  z-index: 1;
-}
-.jv-ptt-btn {
-  width: 5.5rem;
-  height: 5.5rem;
-  border-radius: 50%;
-  border: 2px solid var(--jv-accent-cyan);
-  background: radial-gradient(circle at 30% 30%, rgba(34, 211, 238, 0.25), rgba(11, 11, 15, 0.9));
-  color: var(--jv-accent-cyan);
-  font-size: 1.6rem;
-  cursor: pointer;
-  touch-action: none;
-  user-select: none;
-  transition: transform 80ms ease-out, box-shadow 80ms ease-out, background 80ms ease-out;
-  box-shadow: 0 0 24px rgba(34, 211, 238, 0.15);
-}
-.jv-ptt-btn:active,
-.jv-ptt-btn--active {
-  transform: scale(1.08);
-  background: radial-gradient(circle at 30% 30%, rgba(34, 211, 238, 0.55), rgba(11, 11, 15, 0.9));
-  box-shadow: 0 0 40px rgba(34, 211, 238, 0.45);
-}
-.jv-ptt-label {
-  font-size: 0.85rem;
-  color: var(--jv-fg-dim);
-  min-height: 1.2em;
-}
-.jv-mode-toggle {
-  background: transparent;
-  border: 1px solid var(--jv-border);
-  color: var(--jv-fg-faint);
-  border-radius: 999px;
-  padding: 0.2rem 0.7rem;
-  font-size: 0.7rem;
-  cursor: pointer;
-}
-.jv-mode-toggle--active {
-  color: var(--jv-accent-purple);
-  border-color: var(--jv-accent-purple);
-}
-.jv-ptt-hint {
-  font-size: 0.68rem;
-  color: var(--jv-fg-faint);
-}
-
-/* ---------- mic level meter ---------- */
-.jv-mic-level-track {
-  width: 6rem;
-  height: 0.35rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-}
-.jv-mic-level-fill {
-  height: 100%;
-  width: 0%;
-  background: var(--jv-accent-cyan);
-  /* Updated imperatively (~20Hz) straight from the worklet's rms callback —
-   * bypasses React state on purpose, same rationale as visualizer.js's
-   * onMicLevel(). The transition just smooths between those DOM writes. */
-  transition: width 60ms linear;
-}
-
-/* ---------- mic error/hint banner ---------- */
-.jv-mic-banner {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  max-width: 22rem;
-  font-size: 0.75rem;
-  padding: 0.4rem 0.6rem;
-  border-radius: 0.5rem;
-  border: 1px solid var(--jv-border);
-  background: var(--jv-bg-elevated);
-}
-.jv-mic-banner--error {
-  color: var(--jv-accent-red);
-  border-color: var(--jv-accent-red);
-}
-.jv-mic-banner--hint {
-  color: var(--jv-accent-amber);
-  border-color: var(--jv-accent-amber);
-}
-.jv-mic-banner-close {
-  margin-left: auto;
-  background: transparent;
-  border: none;
+/* scoped mini-reset (the prototype's helmet reset, without touching the host) */
+#jarvis-voice-root button,
+#jarvis-voice-root input,
+#jarvis-voice-root textarea {
+  font: inherit;
   color: inherit;
-  cursor: pointer;
-  font-size: 0.9rem;
-  line-height: 1;
+  letter-spacing: inherit;
+}
+#jarvis-voice-root button {
+  background: transparent;
+  border: 0;
   padding: 0;
 }
-
-/* ---------- transcript / mediator ---------- */
-.jv-stage-text {
-  width: 100%;
-  max-width: 42rem;
-  flex: 0 1 auto;
-  min-height: 0;
-  /* Bounded + independently scrollable so a long reply/transcript can never
-   * force the whole stage (and therefore the page) taller than the
-   * available viewport — see docs task spec "Fix 2". */
-  max-height: min(40%, 18rem);
-  overflow-y: auto;
+#jarvis-voice-root ::placeholder {
+  color: var(--jv-text-micro);
+  opacity: 1;
 }
-.jv-transcript {
-  min-height: 1.6em;
-  margin-top: 0.75rem;
-  font-size: 1rem;
-  text-align: center;
-  max-width: 42rem;
+#jarvis-voice-root a {
+  color: var(--jv-accent);
+  text-decoration: none;
 }
-.jv-transcript-partial {
-  color: var(--jv-fg-faint);
-  font-style: italic;
+#jarvis-voice-root a:hover {
+  color: #8cf2ee;
 }
-.jv-transcript-final {
-  color: var(--jv-fg);
-}
-.jv-mediator-text {
-  margin-top: 0.5rem;
-  margin-bottom: 1rem;
-  font-size: 0.95rem;
-  color: var(--jv-fg-dim);
-  text-align: center;
-  max-width: 42rem;
-  min-height: 1.4em;
-  white-space: pre-wrap;
+#jarvis-voice-root svg {
+  display: block;
 }
 
-/* ---------- right column ---------- */
-.jv-rightcol {
-  flex: none;
-  width: 21rem;
-  max-width: 32vw;
-  min-height: 0;
-  border-left: 1px solid var(--jv-border);
-  background: var(--jv-bg-elevated);
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.75rem;
-  overflow-y: auto;
-  position: relative;
-  transition: width 220ms ease;
+/* visible focus for keyboard users */
+#jarvis-voice-root :focus-visible {
+  outline: 2px solid var(--jv-accent);
+  outline-offset: 2px;
 }
-.jv-rightcol--collapsed {
-  width: 2.25rem;
-  max-width: 2.25rem;
-  padding: 0.75rem 0.25rem;
-  overflow: visible;
+#jarvis-voice-root input:focus-visible {
+  outline: none; /* inputs signal focus via their container's border */
 }
-.jv-collapse-btn {
-  position: sticky;
-  top: 0;
-  align-self: flex-end;
+
+/* scrollbars (scoped) */
+#jarvis-voice-root *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+#jarvis-voice-root *::-webkit-scrollbar-thumb {
+  background: rgba(120, 190, 200, 0.15);
+  border-radius: 4px;
+}
+#jarvis-voice-root *::-webkit-scrollbar-track {
   background: transparent;
-  border: 1px solid var(--jv-border);
-  color: var(--jv-fg-dim);
-  border-radius: 0.4rem;
-  width: 1.6rem;
-  height: 1.6rem;
-  cursor: pointer;
-  z-index: 2;
+}
+#jarvis-voice-root * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 190, 200, 0.15) transparent;
 }
 
-.jv-panel {
-  background: var(--jv-panel-bg);
-  border: 1px solid var(--jv-border);
-  border-radius: 0.75rem;
-  padding: 0.65rem 0.75rem;
-}
-.jv-panel-title {
-  font-size: 0.7rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--jv-fg-faint);
-  margin-bottom: 0.5rem;
-}
-.jv-empty {
-  font-size: 0.8rem;
-  color: var(--jv-fg-faint);
-  padding: 0.25rem 0;
-}
-
-/* ---------- timeline ---------- */
-.jv-timeline {
-  max-height: 16rem;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.jv-timeline-row {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  padding: 0.15rem 0;
-}
-.jv-timeline-head {
-  display: flex;
-  align-items: baseline;
-  gap: 0.4rem;
-  font-size: 0.78rem;
-}
-.jv-clickable {
-  cursor: pointer;
-}
-.jv-timeline-ts {
-  color: var(--jv-fg-faint);
-  font-variant-numeric: tabular-nums;
-}
-.jv-timeline-icon {
-  color: var(--jv-accent-cyan);
-  width: 1.1em;
-  text-align: center;
-}
-.jv-timeline-label {
-  color: var(--jv-fg-dim);
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.jv-timeline-chevron {
-  color: var(--jv-fg-faint);
-}
-.jv-timeline-details {
-  margin: 0.25rem 0 0.25rem 1.5rem;
-  padding: 0.5rem;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 0.4rem;
-  font-size: 0.72rem;
-  color: var(--jv-fg-dim);
-  max-height: 12rem;
-  overflow: auto;
-  white-space: pre-wrap;
-}
-
-/* ---------- tasks ---------- */
-.jv-task-row {
-  padding: 0.4rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-.jv-task-main {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.8rem;
-}
-.jv-task-title {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--jv-fg);
-}
-.jv-task-kind {
-  color: var(--jv-fg-faint);
-  font-size: 0.7rem;
-}
-.jv-task-note {
-  font-size: 0.72rem;
-  color: var(--jv-fg-faint);
-  margin-top: 0.15rem;
-}
-.jv-task-controls {
-  display: flex;
-  gap: 0.3rem;
-  margin-top: 0.3rem;
-}
-
-/* ---------- memory ---------- */
-.jv-memory-row {
-  padding: 0.3rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-.jv-memory-title {
-  font-size: 0.8rem;
-  color: var(--jv-fg);
-}
-.jv-memory-path {
-  font-size: 0.7rem;
-  color: var(--jv-fg-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---------- health / latency ---------- */
-.jv-health-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  margin-bottom: 0.5rem;
-}
-.jv-latency-row {
-  display: flex;
-  gap: 0.5rem;
-  font-size: 0.72rem;
-  color: var(--jv-fg-dim);
-  padding: 0.1rem 0;
-}
-.jv-latency-stage {
-  flex: 1 1 auto;
-  color: var(--jv-fg-faint);
-}
-
-/* ---------- text input ---------- */
-.jv-textbar {
-  flex: none;
-  display: flex;
-  gap: 0.5rem;
-  padding: 0.6rem 1rem;
-  border-top: 1px solid var(--jv-border);
-  background: var(--jv-bg-elevated);
-}
-.jv-textbar-input {
-  flex: 1 1 auto;
-  background: var(--jv-bg);
-  border: 1px solid var(--jv-border);
-  border-radius: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  color: var(--jv-fg);
-  font-size: 0.9rem;
-}
-.jv-textbar-input:focus {
-  outline: none;
-  border-color: var(--jv-accent-cyan);
-}
-
-/* ---------- buttons ---------- */
-.jv-btn {
-  background: var(--jv-bg-elevated);
-  border: 1px solid var(--jv-border);
-  color: var(--jv-fg);
-  border-radius: 0.5rem;
-  padding: 0.45rem 0.9rem;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-.jv-btn:hover {
-  border-color: var(--jv-fg-faint);
-}
-.jv-btn--tiny {
-  padding: 0.15rem 0.5rem;
-  font-size: 0.7rem;
-}
-.jv-btn--danger {
-  color: var(--jv-accent-red);
-  border-color: var(--jv-accent-red);
-}
-.jv-btn--primary {
-  color: var(--jv-bg);
-  background: var(--jv-accent-cyan);
-  border-color: var(--jv-accent-cyan);
-  font-weight: 600;
-}
-
-/* ---------- settings popover ---------- */
-.jv-settings-popover {
-  position: absolute;
-  top: 3.25rem;
-  right: 1rem;
-  width: 16rem;
-  background: var(--jv-panel-bg);
-  border: 1px solid var(--jv-border);
-  border-radius: 0.75rem;
-  padding: 0.85rem;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-.jv-settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 0.8rem;
-  color: var(--jv-fg-dim);
-  gap: 0.5rem;
-}
-.jv-settings-row select {
-  background: var(--jv-bg);
-  color: var(--jv-fg);
-  border: 1px solid var(--jv-border);
-  border-radius: 0.4rem;
-  padding: 0.2rem 0.4rem;
-}
-
-/* ---------- offline overlay ---------- */
-.jv-overlay {
+/* ---------- intelligence core canvas ---------- */
+#jarvis-voice-root .jv-canvas {
   position: absolute;
   inset: 0;
-  background: rgba(5, 5, 8, 0.82);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 30;
-  backdrop-filter: blur(2px);
-}
-.jv-overlay-card {
-  background: var(--jv-panel-bg);
-  border: 1px solid var(--jv-border);
-  border-radius: 1rem;
-  padding: 1.5rem 2rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.6rem;
-  max-width: 24rem;
-  text-align: center;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-}
-.jv-overlay-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--jv-accent-red);
-}
-.jv-overlay-sub {
-  font-size: 0.85rem;
-  color: var(--jv-fg-dim);
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
-/* ---------- responsive ---------- */
-@media (max-width: 860px) {
-  .jv-rightcol {
-    display: none;
+/* ---------- keyframes + motion classes (prototype helmet) ---------- */
+@keyframes jvBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.22;
   }
 }
+@keyframes jvSweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+@keyframes jvRise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+#jarvis-voice-root .jv-blink {
+  animation: jvBlink 1.3s ease-in-out infinite;
+}
+#jarvis-voice-root .jv-rise {
+  animation: jvRise var(--jv-base) var(--jv-ease);
+}
+/* indeterminate running-task bar: task.update has no numeric progress
+ * fraction, so the sweep signals "running", nothing more */
+#jarvis-voice-root .jv-indeterminate {
+  animation: jvSweep 1.6s var(--jv-ease) infinite;
+}
+/* live-partial caret */
+#jarvis-voice-root .jv-caret {
+  display: inline-block;
+  width: 7px;
+  height: 16px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  background: var(--jv-accent);
+  animation: jvBlink 1s steps(1) infinite;
+}
+/* currently-spoken sentence inside the streamed reply (tts.start match) */
+#jarvis-voice-root .jv-spoken {
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(79, 227, 224, 0), rgba(79, 227, 224, 0.14));
+  box-shadow: inset 0 -1px 0 rgba(79, 227, 224, 0.7);
+}
+
+/* mic ring transition (opacity/scale written imperatively per level tick) */
+#jarvis-voice-root .jv-mic-ring {
+  transition: opacity var(--jv-fast) linear;
+}
+
+/* ---------- reduced motion (OS-level) ---------- */
+@media (prefers-reduced-motion: reduce) {
+  #jarvis-voice-root *,
+  #jarvis-voice-root *::before,
+  #jarvis-voice-root *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+/*! tailwindcss v4.3.3 | MIT License | https://tailwindcss.com */
+@supports (((-webkit-hyphens:none)) and (not (margin-trim:inline))) or ((-moz-orient:inline) and (not (color:rgb(from red r g b)))){#jarvis-voice-root *,#jarvis-voice-root :before,#jarvis-voice-root :after,#jarvis-voice-root ::backdrop{--tw-scale-x:1;--tw-scale-y:1;--tw-scale-z:1;--tw-rotate-x:initial;--tw-rotate-y:initial;--tw-rotate-z:initial;--tw-skew-x:initial;--tw-skew-y:initial;--tw-border-style:solid;--tw-gradient-position:initial;--tw-gradient-from:#0000;--tw-gradient-via:#0000;--tw-gradient-to:#0000;--tw-gradient-stops:initial;--tw-gradient-via-stops:initial;--tw-gradient-from-position:0%;--tw-gradient-via-position:50%;--tw-gradient-to-position:100%;--tw-leading:initial;--tw-tracking:initial;--tw-shadow:0 0 #0000;--tw-shadow-color:initial;--tw-shadow-alpha:100%;--tw-inset-shadow:0 0 #0000;--tw-inset-shadow-color:initial;--tw-inset-shadow-alpha:100%;--tw-ring-color:initial;--tw-ring-shadow:0 0 #0000;--tw-inset-ring-color:initial;--tw-inset-ring-shadow:0 0 #0000;--tw-ring-inset:initial;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-offset-shadow:0 0 #0000;--tw-duration:initial;--tw-blur:initial;--tw-brightness:initial;--tw-contrast:initial;--tw-grayscale:initial;--tw-hue-rotate:initial;--tw-invert:initial;--tw-opacity:initial;--tw-saturate:initial;--tw-sepia:initial;--tw-drop-shadow:initial;--tw-drop-shadow-color:initial;--tw-drop-shadow-alpha:100%;--tw-drop-shadow-size:initial}}#jarvis-voice-root .pointer-events-auto{pointer-events:auto}#jarvis-voice-root .pointer-events-none{pointer-events:none}#jarvis-voice-root .collapse{visibility:collapse}#jarvis-voice-root .visible{visibility:visible}#jarvis-voice-root .absolute{position:absolute}#jarvis-voice-root .relative{position:relative}#jarvis-voice-root .static{position:static}#jarvis-voice-root .-inset-\[6px\]{inset:-6px}#jarvis-voice-root .inset-0{inset:0}#jarvis-voice-root .inset-x-0{inset-inline:0}#jarvis-voice-root .inset-y-0{inset-block:0}#jarvis-voice-root .top-4{top:16px}#jarvis-voice-root .right-0{right:0}#jarvis-voice-root .bottom-0{bottom:0}#jarvis-voice-root .bottom-1{bottom:4px}#jarvis-voice-root .bottom-\[14px\]{bottom:14px}#jarvis-voice-root .left-0{left:0}#jarvis-voice-root .left-5{left:20px}#jarvis-voice-root .z-30{z-index:30}#jarvis-voice-root .z-40{z-index:40}#jarvis-voice-root .-m-\[7px\]{margin:-7px}#jarvis-voice-root .mx-3{margin-inline:12px}#jarvis-voice-root .mt-1{margin-top:4px}#jarvis-voice-root .mt-2{margin-top:8px}#jarvis-voice-root .mt-\[2px\]{margin-top:2px}#jarvis-voice-root .mt-\[3px\]{margin-top:3px}#jarvis-voice-root .mt-\[5px\]{margin-top:5px}#jarvis-voice-root .mt-\[6px\]{margin-top:6px}#jarvis-voice-root .mt-\[7px\]{margin-top:7px}#jarvis-voice-root .mt-\[9px\]{margin-top:9px}#jarvis-voice-root .mt-\[10px\]{margin-top:10px}#jarvis-voice-root .mt-\[11px\]{margin-top:11px}#jarvis-voice-root .mt-\[14px\]{margin-top:14px}#jarvis-voice-root .ml-auto{margin-left:auto}#jarvis-voice-root .block{display:block}#jarvis-voice-root .contents{display:contents}#jarvis-voice-root .flex{display:flex}#jarvis-voice-root .grid{display:grid}#jarvis-voice-root .hidden{display:none}#jarvis-voice-root .inline{display:inline}#jarvis-voice-root .inline-flex{display:inline-flex}#jarvis-voice-root .table{display:table}#jarvis-voice-root .\!h-11{height:44px!important}#jarvis-voice-root .h-1{height:4px}#jarvis-voice-root .h-2{height:8px}#jarvis-voice-root .h-4{height:16px}#jarvis-voice-root .h-5{height:20px}#jarvis-voice-root .h-7{height:28px}#jarvis-voice-root .h-11{height:44px}#jarvis-voice-root .h-16{height:64px}#jarvis-voice-root .h-\[2px\]{height:2px}#jarvis-voice-root .h-\[3px\]{height:3px}#jarvis-voice-root .h-\[5px\]{height:5px}#jarvis-voice-root .h-\[6px\]{height:6px}#jarvis-voice-root .h-\[7px\]{height:7px}#jarvis-voice-root .h-\[11px\]{height:11px}#jarvis-voice-root .h-\[18px\]{height:18px}#jarvis-voice-root .h-\[22px\]{height:22px}#jarvis-voice-root .h-\[26px\]{height:26px}#jarvis-voice-root .h-\[30px\]{height:30px}#jarvis-voice-root .h-\[34px\]{height:34px}#jarvis-voice-root .h-\[46px\]{height:46px}#jarvis-voice-root .h-\[52px\]{height:52px}#jarvis-voice-root .h-full{height:100%}#jarvis-voice-root .h-px{height:1px}#jarvis-voice-root .max-h-40{max-height:160px}#jarvis-voice-root .max-h-\[72\%\]{max-height:72%}#jarvis-voice-root .min-h-0{min-height:0}#jarvis-voice-root .min-h-\[120px\]{min-height:120px}#jarvis-voice-root .min-h-\[132px\]{min-height:132px}#jarvis-voice-root .w-0{width:0}#jarvis-voice-root .w-1{width:4px}#jarvis-voice-root .w-2{width:8px}#jarvis-voice-root .w-2\/5{width:40%}#jarvis-voice-root .w-11{width:44px}#jarvis-voice-root .w-16{width:64px}#jarvis-voice-root .w-\[5px\]{width:5px}#jarvis-voice-root .w-\[6px\]{width:6px}#jarvis-voice-root .w-\[7px\]{width:7px}#jarvis-voice-root .w-\[38px\]{width:38px}#jarvis-voice-root .w-\[46px\]{width:46px}#jarvis-voice-root .w-\[52px\]{width:52px}#jarvis-voice-root .w-\[76px\]{width:76px}#jarvis-voice-root .w-\[min\(520px\,86\%\)\]{width:min(520px,86%)}#jarvis-voice-root .w-full{width:100%}#jarvis-voice-root .w-px{width:1px}#jarvis-voice-root .min-w-0{min-width:0}#jarvis-voice-root .flex-1{flex:1}#jarvis-voice-root .flex-\[0_1_232px\]{flex:0 232px}#jarvis-voice-root .flex-\[1\.05\]{flex:1.05}#jarvis-voice-root .flex-none{flex:none}#jarvis-voice-root .grow{flex-grow:1}#jarvis-voice-root .scale-90{--tw-scale-x:90%;--tw-scale-y:90%;--tw-scale-z:90%;scale:var(--tw-scale-x) var(--tw-scale-y)}#jarvis-voice-root .transform{transform:var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,)}#jarvis-voice-root .cursor-not-allowed{cursor:not-allowed}#jarvis-voice-root .cursor-pointer{cursor:pointer}#jarvis-voice-root .resize{resize:both}#jarvis-voice-root .grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}#jarvis-voice-root .grid-cols-\[52px_10px_minmax\(0\,1fr\)\]{grid-template-columns:52px 10px minmax(0,1fr)}#jarvis-voice-root .grid-cols-\[56px_14px_minmax\(0\,1fr\)\]{grid-template-columns:56px 14px minmax(0,1fr)}#jarvis-voice-root .grid-cols-\[62px_minmax\(0\,1fr\)\]{grid-template-columns:62px minmax(0,1fr)}#jarvis-voice-root .grid-cols-\[304px_minmax\(0\,1fr\)_372px\]{grid-template-columns:304px minmax(0,1fr) 372px}#jarvis-voice-root .grid-cols-\[minmax\(0\,1fr\)_344px\]{grid-template-columns:minmax(0,1fr) 344px}#jarvis-voice-root .flex-col{flex-direction:column}#jarvis-voice-root .flex-wrap{flex-wrap:wrap}#jarvis-voice-root .items-baseline{align-items:baseline}#jarvis-voice-root .items-center{align-items:center}#jarvis-voice-root .items-start{align-items:flex-start}#jarvis-voice-root .justify-center{justify-content:center}#jarvis-voice-root .justify-end{justify-content:flex-end}#jarvis-voice-root .gap-2{gap:8px}#jarvis-voice-root .gap-3{gap:12px}#jarvis-voice-root .gap-5{gap:20px}#jarvis-voice-root .gap-\[2px\]{gap:2px}#jarvis-voice-root .gap-\[3px\]{gap:3px}#jarvis-voice-root .gap-\[5px\]{gap:5px}#jarvis-voice-root .gap-\[6px\]{gap:6px}#jarvis-voice-root .gap-\[7px\]{gap:7px}#jarvis-voice-root .gap-\[9px\]{gap:9px}#jarvis-voice-root .gap-\[10px\]{gap:10px}#jarvis-voice-root .gap-\[11px\]{gap:11px}#jarvis-voice-root .gap-\[14px\]{gap:14px}#jarvis-voice-root .gap-\[22px\]{gap:22px}#jarvis-voice-root .overflow-hidden{overflow:hidden}#jarvis-voice-root .overflow-visible{overflow:visible}#jarvis-voice-root .overflow-y-auto{overflow-y:auto}#jarvis-voice-root .rounded-\[2px\]{border-radius:2px}#jarvis-voice-root .rounded-\[3px\]{border-radius:3px}#jarvis-voice-root .rounded-\[4px\]{border-radius:4px}#jarvis-voice-root .rounded-\[6px\]{border-radius:6px}#jarvis-voice-root .rounded-\[7px\]{border-radius:7px}#jarvis-voice-root .rounded-\[8px\]{border-radius:8px}#jarvis-voice-root .rounded-\[23px\]{border-radius:23px}#jarvis-voice-root .rounded-full{border-radius:3.40282e38px}#jarvis-voice-root .rounded-lg{border-radius:12px}#jarvis-voice-root .rounded-md{border-radius:9px}#jarvis-voice-root .rounded-sm{border-radius:5px}#jarvis-voice-root .rounded-t-\[18px\]{border-top-left-radius:18px;border-top-right-radius:18px}#jarvis-voice-root .border{border-style:var(--tw-border-style);border-width:1px}#jarvis-voice-root .border-0{border-style:var(--tw-border-style);border-width:0}#jarvis-voice-root .border-t{border-top-style:var(--tw-border-style);border-top-width:1px}#jarvis-voice-root .border-r{border-right-style:var(--tw-border-style);border-right-width:1px}#jarvis-voice-root .border-b{border-bottom-style:var(--tw-border-style);border-bottom-width:1px}#jarvis-voice-root .border-l{border-left-style:var(--tw-border-style);border-left-width:1px}#jarvis-voice-root .border-dashed{--tw-border-style:dashed;border-style:dashed}#jarvis-voice-root .border-\[rgba\(79\,227\,224\,\.2\)\]{border-color:#4fe3e033}#jarvis-voice-root .border-\[rgba\(79\,227\,224\,\.3\)\]{border-color:#4fe3e04d}#jarvis-voice-root .border-\[rgba\(79\,227\,224\,\.4\)\]{border-color:#4fe3e066}#jarvis-voice-root .border-\[rgba\(79\,227\,224\,\.5\)\]{border-color:#4fe3e080}#jarvis-voice-root .border-\[rgba\(79\,227\,224\,\.7\)\]{border-color:#4fe3e0b3}#jarvis-voice-root .border-\[rgba\(79\,227\,224\,\.24\)\]{border-color:#4fe3e03d}#jarvis-voice-root .border-\[rgba\(79\,227\,224\,\.28\)\]{border-color:#4fe3e047}#jarvis-voice-root .border-\[rgba\(79\,227\,224\,\.34\)\]{border-color:#4fe3e057}#jarvis-voice-root .border-\[rgba\(104\,234\,208\,\.34\)\]{border-color:#68ead057}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.1\)\]{border-color:#78bec81a}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.2\)\]{border-color:#78bec833}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.07\)\]{border-color:#78bec812}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.09\)\]{border-color:#78bec817}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.10\)\]{border-color:#78bec81a}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.11\)\]{border-color:#78bec81c}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.12\)\]{border-color:#78bec81f}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.13\)\]{border-color:#78bec821}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.14\)\]{border-color:#78bec824}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.15\)\]{border-color:#78bec826}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.16\)\]{border-color:#78bec829}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.18\)\]{border-color:#78bec82e}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.22\)\]{border-color:#78bec838}#jarvis-voice-root .border-\[rgba\(120\,190\,200\,\.24\)\]{border-color:#78bec83d}#jarvis-voice-root .border-\[rgba\(242\,179\,92\,\.3\)\]{border-color:#f2b35c4d}#jarvis-voice-root .border-\[rgba\(242\,179\,92\,\.4\)\]{border-color:#f2b35c66}#jarvis-voice-root .border-\[rgba\(242\,179\,92\,\.18\)\]{border-color:#f2b35c2e}#jarvis-voice-root .border-\[rgba\(242\,179\,92\,\.26\)\]{border-color:#f2b35c42}#jarvis-voice-root .border-\[rgba\(242\,179\,92\,\.28\)\]{border-color:#f2b35c47}#jarvis-voice-root .border-\[rgba\(242\,179\,92\,\.35\)\]{border-color:#f2b35c59}#jarvis-voice-root .border-\[rgba\(242\,179\,92\,\.42\)\]{border-color:#f2b35c6b}#jarvis-voice-root .border-\[rgba\(242\,179\,92\,\.45\)\]{border-color:#f2b35c73}#jarvis-voice-root .border-\[rgba\(255\,107\,107\,\.2\)\]{border-color:#ff6b6b33}#jarvis-voice-root .border-\[rgba\(255\,107\,107\,\.3\)\]{border-color:#ff6b6b4d}#jarvis-voice-root .border-\[rgba\(255\,107\,107\,\.35\)\]{border-color:#ff6b6b59}#jarvis-voice-root .border-\[rgba\(255\,107\,107\,\.42\)\]{border-color:#ff6b6b6b}#jarvis-voice-root .border-line-strong{border-color:var(--jv-line-strong)}#jarvis-voice-root .border-transparent{border-color:#0000}#jarvis-voice-root .bg-\[rgba\(4\,7\,9\,\.6\)\]{background-color:#04070999}#jarvis-voice-root .bg-\[rgba\(6\,10\,12\,\.7\)\]{background-color:#060a0cb3}#jarvis-voice-root .bg-\[rgba\(8\,12\,14\,\.9\)\]{background-color:#080c0ee6}#jarvis-voice-root .bg-\[rgba\(9\,14\,17\,\.8\)\]{background-color:#090e11cc}#jarvis-voice-root .bg-\[rgba\(9\,14\,17\,\.85\)\]{background-color:#090e11d9}#jarvis-voice-root .bg-\[rgba\(11\,17\,20\,\.7\)\]{background-color:#0b1114b3}#jarvis-voice-root .bg-\[rgba\(11\,17\,20\,\.75\)\]{background-color:#0b1114bf}#jarvis-voice-root .bg-\[rgba\(11\,20\,23\,\.85\)\]{background-color:#0b1417d9}#jarvis-voice-root .bg-\[rgba\(12\,26\,29\,\.6\)\]{background-color:#0c1a1d99}#jarvis-voice-root .bg-\[rgba\(12\,26\,29\,\.75\)\]{background-color:#0c1a1dbf}#jarvis-voice-root .bg-\[rgba\(14\,16\,15\,\.6\)\]{background-color:#0e100f99}#jarvis-voice-root .bg-\[rgba\(14\,16\,15\,\.8\)\]{background-color:#0e100fcc}#jarvis-voice-root .bg-\[rgba\(14\,16\,15\,\.96\)\]{background-color:#0e100ff5}#jarvis-voice-root .bg-\[rgba\(14\,22\,26\,\.6\)\]{background-color:#0e161a99}#jarvis-voice-root .bg-\[rgba\(20\,32\,36\,\.6\)\]{background-color:#14202499}#jarvis-voice-root .bg-\[rgba\(79\,227\,224\,\.1\)\]{background-color:#4fe3e01a}#jarvis-voice-root .bg-\[rgba\(79\,227\,224\,\.09\)\]{background-color:#4fe3e017}#jarvis-voice-root .bg-\[rgba\(79\,227\,224\,\.12\)\]{background-color:#4fe3e01f}#jarvis-voice-root .bg-\[rgba\(104\,234\,208\,\.08\)\]{background-color:#68ead014}#jarvis-voice-root .bg-\[rgba\(120\,190\,200\,\.1\)\]{background-color:#78bec81a}#jarvis-voice-root .bg-\[rgba\(120\,190\,200\,\.2\)\]{background-color:#78bec833}#jarvis-voice-root .bg-\[rgba\(120\,190\,200\,\.06\)\]{background-color:#78bec80f}#jarvis-voice-root .bg-\[rgba\(120\,190\,200\,\.08\)\]{background-color:#78bec814}#jarvis-voice-root .bg-\[rgba\(120\,190\,200\,\.12\)\]{background-color:#78bec81f}#jarvis-voice-root .bg-\[rgba\(120\,190\,200\,\.22\)\]{background-color:#78bec838}#jarvis-voice-root .bg-\[rgba\(120\,190\,200\,\.24\)\]{background-color:#78bec83d}#jarvis-voice-root .bg-\[rgba\(120\,190\,200\,\.35\)\]{background-color:#78bec859}#jarvis-voice-root .bg-\[rgba\(242\,179\,92\,\.1\)\]{background-color:#f2b35c1a}#jarvis-voice-root .bg-\[rgba\(242\,179\,92\,\.08\)\]{background-color:#f2b35c14}#jarvis-voice-root .bg-\[rgba\(242\,179\,92\,\.09\)\]{background-color:#f2b35c17}#jarvis-voice-root .bg-\[rgba\(242\,179\,92\,\.12\)\]{background-color:#f2b35c1f}#jarvis-voice-root .bg-\[rgba\(242\,179\,92\,\.14\)\]{background-color:#f2b35c24}#jarvis-voice-root .bg-\[rgba\(255\,107\,107\,\.1\)\]{background-color:#ff6b6b1a}#jarvis-voice-root .bg-accent{background-color:var(--jv-accent)}#jarvis-voice-root .bg-danger{background-color:var(--jv-danger)}#jarvis-voice-root .bg-surface{background-color:var(--jv-surface)}#jarvis-voice-root .bg-transparent{background-color:#0000}#jarvis-voice-root .bg-warn{background-color:var(--jv-warn)}#jarvis-voice-root .bg-gradient-to-b{--tw-gradient-position:to bottom in oklab;background-image:linear-gradient(var(--tw-gradient-stops))}#jarvis-voice-root .bg-gradient-to-r{--tw-gradient-position:to right in oklab;background-image:linear-gradient(var(--tw-gradient-stops))}#jarvis-voice-root .bg-\[radial-gradient\(circle_at_50\%_35\%\,rgba\(30\,50\,54\,\.9\)\,rgba\(10\,16\,19\,\.95\)\)\]{background-image:radial-gradient(circle at 50% 35%,#1e3236e6,#0a1013f2)}#jarvis-voice-root .bg-\[radial-gradient\(circle_at_50\%_35\%\,rgba\(79\,227\,224\,\.34\)\,rgba\(10\,26\,28\,\.9\)\)\]{background-image:radial-gradient(circle at 50% 35%,#4fe3e057,#0a1a1ce6)}#jarvis-voice-root .from-\[\#8A6B33\]{--tw-gradient-from:#8a6b33;--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .from-\[rgba\(10\,16\,19\,\.6\)\]{--tw-gradient-from:#0a101399;--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .from-\[rgba\(14\,22\,26\,\.9\)\]{--tw-gradient-from:#0e161ae6;--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .from-\[rgba\(120\,190\,200\,\.2\)\]{--tw-gradient-from:#78bec833;--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .from-accent-deep{--tw-gradient-from:var(--jv-accent-deep);--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .from-transparent{--tw-gradient-from:transparent;--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .to-\[rgba\(7\,10\,12\,\.2\)\]{--tw-gradient-to:#070a0c33;--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .to-\[rgba\(8\,12\,14\,\.9\)\]{--tw-gradient-to:#080c0ee6;--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .to-\[rgba\(10\,16\,19\,\.7\)\]{--tw-gradient-to:#0a1013b3;--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .to-accent{--tw-gradient-to:var(--jv-accent);--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .to-transparent{--tw-gradient-to:transparent;--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .to-warn{--tw-gradient-to:var(--jv-warn);--tw-gradient-stops:var(--tw-gradient-via-stops,var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position))}#jarvis-voice-root .p-0{padding:0}#jarvis-voice-root .p-\[13px\]{padding:13px}#jarvis-voice-root .\!px-\[14px\]{padding-inline:14px!important}#jarvis-voice-root .px-1{padding-inline:4px}#jarvis-voice-root .px-2{padding-inline:8px}#jarvis-voice-root .px-3{padding-inline:12px}#jarvis-voice-root .px-4{padding-inline:16px}#jarvis-voice-root .px-5{padding-inline:20px}#jarvis-voice-root .px-\[2px\]{padding-inline:2px}#jarvis-voice-root .px-\[6px\]{padding-inline:6px}#jarvis-voice-root .px-\[7px\]{padding-inline:7px}#jarvis-voice-root .px-\[9px\]{padding-inline:9px}#jarvis-voice-root .px-\[10px\]{padding-inline:10px}#jarvis-voice-root .px-\[11px\]{padding-inline:11px}#jarvis-voice-root .px-\[13px\]{padding-inline:13px}#jarvis-voice-root .px-\[14px\]{padding-inline:14px}#jarvis-voice-root .px-\[15px\]{padding-inline:15px}#jarvis-voice-root .px-\[18px\]{padding-inline:18px}#jarvis-voice-root .px-\[22px\]{padding-inline:22px}#jarvis-voice-root .py-1{padding-block:4px}#jarvis-voice-root .py-2{padding-block:8px}#jarvis-voice-root .py-3{padding-block:12px}#jarvis-voice-root .py-4{padding-block:16px}#jarvis-voice-root .py-\[2px\]{padding-block:2px}#jarvis-voice-root .py-\[5px\]{padding-block:5px}#jarvis-voice-root .py-\[6px\]{padding-block:6px}#jarvis-voice-root .py-\[7px\]{padding-block:7px}#jarvis-voice-root .py-\[10px\]{padding-block:10px}#jarvis-voice-root .py-\[11px\]{padding-block:11px}#jarvis-voice-root .py-\[18px\]{padding-block:18px}#jarvis-voice-root .pt-1{padding-top:4px}#jarvis-voice-root .pt-2{padding-top:8px}#jarvis-voice-root .pt-3{padding-top:12px}#jarvis-voice-root .pt-4{padding-top:16px}#jarvis-voice-root .pt-\[2px\]{padding-top:2px}#jarvis-voice-root .pt-\[6px\]{padding-top:6px}#jarvis-voice-root .pt-\[9px\]{padding-top:9px}#jarvis-voice-root .pt-\[11px\]{padding-top:11px}#jarvis-voice-root .pt-\[14px\]{padding-top:14px}#jarvis-voice-root .pt-px{padding-top:1px}#jarvis-voice-root .pb-1{padding-bottom:4px}#jarvis-voice-root .pb-2{padding-bottom:8px}#jarvis-voice-root .pb-3{padding-bottom:12px}#jarvis-voice-root .pb-4{padding-bottom:16px}#jarvis-voice-root .pb-\[6px\]{padding-bottom:6px}#jarvis-voice-root .pb-\[10px\]{padding-bottom:10px}#jarvis-voice-root .pb-\[14px\]{padding-bottom:14px}#jarvis-voice-root .pb-\[110px\]{padding-bottom:110px}#jarvis-voice-root .pb-\[calc\(12px\+env\(safe-area-inset-bottom\)\)\]{padding-bottom:calc(12px + env(safe-area-inset-bottom))}#jarvis-voice-root .pb-\[calc\(16px\+env\(safe-area-inset-bottom\)\)\]{padding-bottom:calc(16px + env(safe-area-inset-bottom))}#jarvis-voice-root .font-mono{font-family:var(--jv-mono)}#jarvis-voice-root .\!text-\[13px\]{font-size:13px!important}#jarvis-voice-root .text-\[9px\]{font-size:9px}#jarvis-voice-root .text-\[10px\]{font-size:10px}#jarvis-voice-root .text-\[11px\]{font-size:11px}#jarvis-voice-root .text-\[12px\]{font-size:12px}#jarvis-voice-root .text-\[13px\]{font-size:13px}#jarvis-voice-root .text-\[14px\]{font-size:14px}#jarvis-voice-root .text-\[15px\]{font-size:15px}#jarvis-voice-root .text-\[16px\]{font-size:16px}#jarvis-voice-root .text-\[22px\]{font-size:22px}#jarvis-voice-root .leading-\[1\.4\]{--tw-leading:1.4;line-height:1.4}#jarvis-voice-root .leading-\[1\.35\]{--tw-leading:1.35;line-height:1.35}#jarvis-voice-root .leading-\[1\.45\]{--tw-leading:1.45;line-height:1.45}#jarvis-voice-root .leading-\[1\.55\]{--tw-leading:1.55;line-height:1.55}#jarvis-voice-root .leading-none{--tw-leading:1;line-height:1}#jarvis-voice-root .tracking-\[\.1em\]{--tw-tracking:.1em;letter-spacing:.1em}#jarvis-voice-root .tracking-\[\.02em\]{--tw-tracking:.02em;letter-spacing:.02em}#jarvis-voice-root .tracking-\[\.2em\]{--tw-tracking:.2em;letter-spacing:.2em}#jarvis-voice-root .tracking-\[\.3em\]{--tw-tracking:.3em;letter-spacing:.3em}#jarvis-voice-root .tracking-\[\.06em\]{--tw-tracking:.06em;letter-spacing:.06em}#jarvis-voice-root .tracking-\[\.08em\]{--tw-tracking:.08em;letter-spacing:.08em}#jarvis-voice-root .tracking-\[\.12em\]{--tw-tracking:.12em;letter-spacing:.12em}#jarvis-voice-root .tracking-\[\.14em\]{--tw-tracking:.14em;letter-spacing:.14em}#jarvis-voice-root .tracking-\[\.16em\]{--tw-tracking:.16em;letter-spacing:.16em}#jarvis-voice-root .tracking-\[\.18em\]{--tw-tracking:.18em;letter-spacing:.18em}#jarvis-voice-root .tracking-\[\.36em\]{--tw-tracking:.36em;letter-spacing:.36em}#jarvis-voice-root .text-pretty{text-wrap:pretty}#jarvis-voice-root .break-words{overflow-wrap:break-word}#jarvis-voice-root .break-all{word-break:break-all}#jarvis-voice-root .text-ellipsis{text-overflow:ellipsis}#jarvis-voice-root .whitespace-nowrap{white-space:nowrap}#jarvis-voice-root .whitespace-pre-wrap{white-space:pre-wrap}#jarvis-voice-root .text-\[\#6E6154\]{color:#6e6154}#jarvis-voice-root .text-\[\#7FA0A5\]{color:#7fa0a5}#jarvis-voice-root .text-\[\#8DE8CE\]{color:#8de8ce}#jarvis-voice-root .text-\[\#9DF0EC\]{color:#9df0ec}#jarvis-voice-root .text-\[\#B7A98F\]{color:#b7a98f}#jarvis-voice-root .text-\[\#B8CCD0\]{color:#b8ccd0}#jarvis-voice-root .text-\[\#B9A6E8\]{color:#b9a6e8}#jarvis-voice-root .text-\[\#C8DBDE\]{color:#c8dbde}#jarvis-voice-root .text-\[\#D8ECEE\]{color:#d8ecee}#jarvis-voice-root .text-\[\#EAFFFE\]{color:#eafffe}#jarvis-voice-root .text-\[\#F7DCAE\]{color:#f7dcae}#jarvis-voice-root .text-\[\#FF8F8F\]{color:#ff8f8f}#jarvis-voice-root .text-accent{color:var(--jv-accent)}#jarvis-voice-root .text-accent-soft{color:var(--jv-accent-soft)}#jarvis-voice-root .text-dim{color:var(--jv-text-dim)}#jarvis-voice-root .text-faint{color:var(--jv-text-faint)}#jarvis-voice-root .text-inherit{color:inherit}#jarvis-voice-root .text-micro{color:var(--jv-text-micro)}#jarvis-voice-root .text-text{color:var(--jv-text)}#jarvis-voice-root .text-warn{color:var(--jv-warn)}#jarvis-voice-root .uppercase{text-transform:uppercase}#jarvis-voice-root .italic{font-style:italic}#jarvis-voice-root .opacity-0{opacity:0}#jarvis-voice-root .opacity-60{opacity:.6}#jarvis-voice-root .shadow-\[0_0_26px_rgba\(79\,227\,224\,\.3\)\]{--tw-shadow:0 0 26px var(--tw-shadow-color,#4fe3e04d);box-shadow:var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)}#jarvis-voice-root .shadow-bloom{--tw-shadow:var(--jv-bloom);box-shadow:var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)}#jarvis-voice-root .shadow-e2{--tw-shadow:var(--jv-e-2);box-shadow:var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)}#jarvis-voice-root .ring{--tw-ring-shadow:var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)}#jarvis-voice-root .transition{transition-property:color,background-color,border-color,outline-color,text-decoration-color,fill,stroke,--tw-gradient-from,--tw-gradient-via,--tw-gradient-to,opacity,box-shadow,transform,translate,scale,rotate,filter,-webkit-backdrop-filter,backdrop-filter,display,content-visibility,overlay,pointer-events;transition-timing-function:var(--tw-ease,ease);transition-duration:var(--tw-duration,0s)}#jarvis-voice-root .transition-colors{transition-property:color,background-color,border-color,outline-color,text-decoration-color,fill,stroke,--tw-gradient-from,--tw-gradient-via,--tw-gradient-to;transition-timing-function:var(--tw-ease,ease);transition-duration:var(--tw-duration,0s)}#jarvis-voice-root .duration-\[220ms\]{--tw-duration:.22s;transition-duration:.22s}#jarvis-voice-root .outline-none{--tw-outline-style:none;outline-style:none}#jarvis-voice-root .focus-within\:border-\[rgba\(79\,227\,224\,\.5\)\]:focus-within{border-color:#4fe3e080}@media (hover:hover){#jarvis-voice-root .hover\:border-\[rgba\(79\,227\,224\,\.4\)\]:hover{border-color:#4fe3e066}#jarvis-voice-root .hover\:border-\[rgba\(79\,227\,224\,\.35\)\]:hover{border-color:#4fe3e059}#jarvis-voice-root .hover\:border-\[rgba\(79\,227\,224\,\.45\)\]:hover{border-color:#4fe3e073}#jarvis-voice-root .hover\:bg-\[rgba\(79\,227\,224\,\.2\)\]:hover{background-color:#4fe3e033}#jarvis-voice-root .hover\:bg-\[rgba\(79\,227\,224\,\.18\)\]:hover{background-color:#4fe3e02e}#jarvis-voice-root .hover\:bg-\[rgba\(242\,179\,92\,\.2\)\]:hover{background-color:#f2b35c33}#jarvis-voice-root .hover\:bg-\[rgba\(242\,179\,92\,\.22\)\]:hover{background-color:#f2b35c38}#jarvis-voice-root .hover\:text-text:hover{color:var(--jv-text)}#jarvis-voice-root .hover\:brightness-110:hover{--tw-brightness:brightness(110%);filter:var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,)}#jarvis-voice-root .hover\:brightness-125:hover{--tw-brightness:brightness(125%);filter:var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,)}}#jarvis-voice-root .active\:scale-95:active{--tw-scale-x:95%;--tw-scale-y:95%;--tw-scale-z:95%;scale:var(--tw-scale-x) var(--tw-scale-y)}@media not all and (min-width:1100px){#jarvis-voice-root .max-\[1100px\]\:hidden{display:none}}@property --tw-scale-x{syntax:"*";inherits:false;initial-value:1}@property --tw-scale-y{syntax:"*";inherits:false;initial-value:1}@property --tw-scale-z{syntax:"*";inherits:false;initial-value:1}@property --tw-rotate-x{syntax:"*";inherits:false}@property --tw-rotate-y{syntax:"*";inherits:false}@property --tw-rotate-z{syntax:"*";inherits:false}@property --tw-skew-x{syntax:"*";inherits:false}@property --tw-skew-y{syntax:"*";inherits:false}@property --tw-border-style{syntax:"*";inherits:false;initial-value:solid}@property --tw-gradient-position{syntax:"*";inherits:false}@property --tw-gradient-from{syntax:"<color>";inherits:false;initial-value:#0000}@property --tw-gradient-via{syntax:"<color>";inherits:false;initial-value:#0000}@property --tw-gradient-to{syntax:"<color>";inherits:false;initial-value:#0000}@property --tw-gradient-stops{syntax:"*";inherits:false}@property --tw-gradient-via-stops{syntax:"*";inherits:false}@property --tw-gradient-from-position{syntax:"<length-percentage>";inherits:false;initial-value:0%}@property --tw-gradient-via-position{syntax:"<length-percentage>";inherits:false;initial-value:50%}@property --tw-gradient-to-position{syntax:"<length-percentage>";inherits:false;initial-value:100%}@property --tw-leading{syntax:"*";inherits:false}@property --tw-tracking{syntax:"*";inherits:false}@property --tw-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-shadow-color{syntax:"*";inherits:false}@property --tw-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-inset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-shadow-color{syntax:"*";inherits:false}@property --tw-inset-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-ring-color{syntax:"*";inherits:false}@property --tw-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-ring-color{syntax:"*";inherits:false}@property --tw-inset-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-ring-inset{syntax:"*";inherits:false}@property --tw-ring-offset-width{syntax:"<length>";inherits:false;initial-value:0}@property --tw-ring-offset-color{syntax:"*";inherits:false;initial-value:#fff}@property --tw-ring-offset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-duration{syntax:"*";inherits:false}@property --tw-blur{syntax:"*";inherits:false}@property --tw-brightness{syntax:"*";inherits:false}@property --tw-contrast{syntax:"*";inherits:false}@property --tw-grayscale{syntax:"*";inherits:false}@property --tw-hue-rotate{syntax:"*";inherits:false}@property --tw-invert{syntax:"*";inherits:false}@property --tw-opacity{syntax:"*";inherits:false}@property --tw-saturate{syntax:"*";inherits:false}@property --tw-sepia{syntax:"*";inherits:false}@property --tw-drop-shadow{syntax:"*";inherits:false}@property --tw-drop-shadow-color{syntax:"*";inherits:false}@property --tw-drop-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-drop-shadow-size{syntax:"*";inherits:false}
