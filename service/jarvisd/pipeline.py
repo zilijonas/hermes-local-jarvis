@@ -52,6 +52,13 @@ class Pipeline:
         self._turn_active = False
         self._tts_last_end = 0.0          # echo rejection only near real playback
         self._pending_voiced_ms = 0.0     # two-stage barge-in accumulator
+        # The last user message that has NOT yet produced a reply. Set when a turn
+        # starts, cleared the instant the mediator returns an answer (BEFORE the
+        # spoken delivery). So a barge-in while thinking leaves it set → resume;
+        # a barge-in while merely speaking a finished answer clears → idle.
+        self._unanswered: Optional[str] = None
+        self._resume_for = ""             # which message the resume budget applies to
+        self._resume_count = 0            # cap auto-resumes so noise can't loop forever
         workers.on_task_event = self._on_task_event  # optional hook
         workers.wait_turn_clear = self._wait_turn_clear
 
@@ -162,7 +169,7 @@ class Pipeline:
             text = str(event.get("text", "")).strip()
             if text:
                 # never block the WS receive loop on a full turn
-                asyncio.get_running_loop().create_task(self.run_turn(text))
+                self._start_text_turn(text)
         elif t == "task.control":
             result = self.workers.control(str(event.get("id", "")),
                                           str(event.get("action", "")))
@@ -193,10 +200,47 @@ class Pipeline:
 
     async def _interrupt_recovery(self) -> None:
         await asyncio.sleep(2.0)
-        if (self.state == "interrupted" and not self._speaking
-                and not (self._turn_task and not self._turn_task.done())):
-            self._set_state("idle")
-            self._drain_announcements()
+        # A new turn already took over (user said something new) — nothing to do.
+        if self._turn_task and not self._turn_task.done():
+            return
+        if self._speaking or self.state != "interrupted":
+            return
+        # User is mid-utterance right now (a real new message is forming) — let the
+        # normal voice path handle it; check back shortly instead of resuming.
+        if self.mic_active and len(self._utt_buf) > 0:
+            asyncio.get_running_loop().create_task(self._interrupt_recovery())
+            return
+        # If the interrupted message was never answered, continue answering it
+        # rather than dropping the user's request on the floor.
+        pending = self._unanswered
+        if pending:
+            if self._resume_for != pending:
+                self._resume_for, self._resume_count = pending, 0
+            if self._resume_count < 2:
+                self._resume_count += 1
+                self.bus.publish({"t": "state", "value": "thinking",
+                                  "detail": "resuming your last message"})
+                self._start_text_turn(pending)
+                return
+        # Answered already, or out of resume budget → settle.
+        self._set_state("idle")
+        self._drain_announcements()
+
+    def _start_text_turn(self, text: str) -> None:
+        """Run a turn from text (resume / typed path) with the same task tracking
+        and error-surfacing as the voice path, so barge-in and recovery see it."""
+        task = asyncio.get_running_loop().create_task(self.run_turn(text))
+        self._turn_task = task
+
+        def _surface(t: asyncio.Task) -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                self.bus.publish({"t": "error", "message": f"turn failed: {exc}"[:300],
+                                  "recoverable": True})
+                self._set_state("idle")
+        task.add_done_callback(_surface)
 
     # ------------------------------------------------------------- turns
     def _spawn_turn(self, pcm: bytes) -> None:
@@ -242,6 +286,7 @@ class Pipeline:
             turn_id = turn_id or f"t{int(time.time() * 1000) % 10 ** 10}"
             t_endpoint = t_endpoint or time.monotonic()
             self._turn_active = True
+            self._unanswered = text   # in-flight, not yet answered
             self._set_state("thinking", turn_id=turn_id)
 
             sentence_q: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -282,21 +327,31 @@ class Pipeline:
                         on_delta=on_delta, on_tool=on_tool, cancel=self._tts_cancel),
                     timeout=90.0)
             except asyncio.TimeoutError:
+                self._unanswered = None   # an error response counts as answered — don't loop
                 self._set_state("error", detail="turn timed out")
                 sentence_q.put_nowait(None)
                 await asyncio.gather(speak_task, return_exceptions=True)
                 return {"reply_text": "", "error": "turn timed out", "turn_id": turn_id}
             except asyncio.CancelledError:
+                # Interrupted mid-thought: leave _unanswered set so recovery can
+                # resume answering this exact message if nothing supersedes it.
                 sentence_q.put_nowait(None)
                 await asyncio.gather(speak_task, return_exceptions=True)
                 raise
             except Exception as e:  # noqa: BLE001
+                self._unanswered = None
                 self._set_state("error", detail=str(e)[:200])
                 sentence_q.put_nowait(None)
                 await asyncio.gather(speak_task, return_exceptions=True)
                 return {"reply_text": "", "error": str(e), "turn_id": turn_id}
             finally:
                 self._turn_active = False
+
+            # The mediator produced a reply — the message IS answered now, even
+            # though we still have to speak it. A barge-in during delivery from
+            # here on should go idle, not resume.
+            self._unanswered = None
+            self._resume_count = 0
 
             if sent_buf.strip():
                 sentence_q.put_nowait(sent_buf.strip())

@@ -1,5 +1,19 @@
 # Jarvis Voice — Final Delivery Report (2026-07-27, fixes 2026-07-28, redesign 2026-07-28)
 
+## Interrupt-resume (2026-07-28, round 4)
+Interruption no longer drops an unanswered message. The pipeline tracks whether the
+current message was *answered* — a flag set when the turn starts and cleared the
+instant the mediator returns a reply, BEFORE spoken delivery. So:
+- barge-in **while thinking** (no reply yet) → after recovery, Jarvis resumes and
+  answers that same message instead of going idle;
+- barge-in **while merely speaking a finished answer** → idle (the message was
+  answered; the user just cut the playback);
+- a genuinely **new utterance** supersedes the old one (no stale resume);
+- resumes are capped at 2 per message so mic noise can't loop, and recovery defers
+  while the user is mid-utterance.
+Verified live: interrupt-while-thinking resumed and completed the answer;
+interrupt-after-answer went straight to idle with no resume.
+
 ## Field-bug fixes round 3 (2026-07-28)
 From live-use reports:
 - **Vanishing transcripts / silent no-response**: echo rejection was firing on
