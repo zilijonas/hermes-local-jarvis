@@ -314,8 +314,12 @@ def create_app(config: JarvisConfig | None = None) -> FastAPI:
         if pipeline is None:
             raise HTTPException(status_code=501, detail="pipeline not initialized")
         body = await request.json()
+        if body.get("reset"):
+            pipeline.mediator.reset()
         text = (body.get("text") or "").strip()
         if not text:
+            if body.get("reset"):
+                return {"ok": True, "reset": True}
             raise HTTPException(status_code=400, detail="text required")
         return await pipeline.run_turn(text)
 

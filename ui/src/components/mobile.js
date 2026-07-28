@@ -6,7 +6,7 @@ import { h } from "../h.js";
 import { getHooks } from "../sdk.js";
 import { useStore } from "../store.js";
 import { cls } from "./util.js";
-import { StateCaption, ToolChip, MicButton, MicBanner, derivedState } from "./stage.js";
+import { StateCaption, ToolChip, MicButton, MicBanner, FullscreenButton, derivedState } from "./stage.js";
 import { TaskCardMobile, ActivityRows } from "./work.js";
 import { MemorySheetContent } from "./memory.js";
 import { statusChip, workerTag, countActionableTasks, sortTasks } from "./util.js";
@@ -94,11 +94,28 @@ function MobileConversation(props) {
           {
             className:
               t.role === "system"
-                ? "mt-1 text-[11px] font-mono text-micro leading-normal"
-                : cls("mt-1 text-[15px] leading-[1.55]", t.role === "user" ? "text-[#C8DBDE]" : "text-text"),
+                ? cls("mt-1 text-[11px] font-mono leading-normal", t.tone === "red" ? "text-[#FF8F8F]" : "text-micro")
+                : cls("mt-1 text-[15px] leading-[1.55]", t.dim ? "text-faint" : t.role === "user" ? "text-[#C8DBDE]" : "text-text"),
           },
           t.text
-        )
+        ),
+        t.meta && t.meta.length
+          ? h(
+              "div",
+              { className: "mt-[5px] flex flex-wrap gap-[6px]" },
+              t.meta.map(function (mi, i) {
+                return h(
+                  "div",
+                  {
+                    key: "m" + i,
+                    className:
+                      "flex items-center gap-[6px] px-[7px] py-[2px] rounded-[4px] border border-[rgba(120,190,200,.14)] bg-[rgba(14,22,26,.6)] text-[10px] font-mono text-faint",
+                  },
+                  mi
+                );
+              })
+            )
+          : null
       );
     }),
     s.sttPartial
@@ -219,6 +236,7 @@ export function MobileShell(props) {
       h("div", { className: "text-[11px] tracking-[.3em] font-semibold text-text" }, "JARVIS"),
       h("div", { className: "flex-1" }),
       ram ? h("div", { className: "text-[10px] font-mono text-micro" }, ram) : null,
+      h(FullscreenButton, { active: s.fullscreen, onClick: act.toggleFullscreen, mobile: true }),
       h(ConnDot, { conn: s.connection })
     ),
     h(
@@ -298,7 +316,10 @@ export function MobileShell(props) {
         ),
         h(MicButton, { s: s, act: act, refs: refs, mobile: true })
       ),
-      h(MicBanner, { store: store, s: s })
+      h(MicBanner, { store: store, s: s }),
+      s.noSpeechHint
+        ? h("div", { className: "mt-[6px] text-[11px] text-faint italic", role: "status", "aria-live": "polite" }, s.noSpeechHint)
+        : null
     ),
     h(Sheet, { store: store, s: s, act: act })
   );

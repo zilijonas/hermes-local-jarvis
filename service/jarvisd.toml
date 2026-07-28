@@ -17,7 +17,7 @@ device = "cpu"
 partial_interval_ms = 600
 
 [vad]
-aggressiveness = 2
+aggressiveness = 3
 endpoint_ms = 500
 min_speech_ms = 200
 

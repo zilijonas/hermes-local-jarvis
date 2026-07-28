@@ -239,8 +239,11 @@ export function ConversationLog(props) {
             {
               className:
                 t.role === "system"
-                  ? "text-[12px] font-mono text-micro leading-normal"
-                  : cls("text-[16px] leading-[1.55] text-pretty", t.role === "user" ? "text-[#C8DBDE]" : "text-text"),
+                  ? cls("text-[12px] font-mono leading-normal", t.tone === "red" ? "text-[#FF8F8F]" : "text-micro")
+                  : cls(
+                      "text-[16px] leading-[1.55] text-pretty",
+                      t.dim ? "text-faint" : t.role === "user" ? "text-[#C8DBDE]" : "text-text"
+                    ),
             },
             t.text
           ),
@@ -306,6 +309,53 @@ function MicIcon(props) {
   );
 }
 export { MicIcon };
+
+// ⛶-style fullscreen glyph: 4 corner brackets, pointing outward when idle
+// (expand) and inward once fullscreen is active (compress) — swapped by the
+// `active` flag, which app.js keeps synced to document.fullscreenElement via
+// the fullscreenchange listener (see app.js).
+function FullscreenIcon(props) {
+  var size = props.size || 13;
+  var svgProps = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" };
+  return props.active
+    ? h(
+        "svg",
+        svgProps,
+        h("path", { d: "M8 3v3a2 2 0 0 1-2 2H3" }),
+        h("path", { d: "M21 8h-3a2 2 0 0 1-2-2V3" }),
+        h("path", { d: "M3 16h3a2 2 0 0 1 2 2v3" }),
+        h("path", { d: "M16 21v-3a2 2 0 0 1 2-2h3" })
+      )
+    : h(
+        "svg",
+        svgProps,
+        h("path", { d: "M8 3H5a2 2 0 0 0-2 2v3" }),
+        h("path", { d: "M21 8V5a2 2 0 0 0-2-2h-3" }),
+        h("path", { d: "M3 16v3a2 2 0 0 0 2 2h3" }),
+        h("path", { d: "M16 21h3a2 2 0 0 0 2-2v-3" })
+      );
+}
+
+export function FullscreenButton(props) {
+  var active = props.active;
+  var mobile = props.mobile;
+  return h(
+    "button",
+    {
+      onClick: props.onClick,
+      "aria-label": "Toggle fullscreen",
+      "aria-pressed": active,
+      className: cls(
+        "flex-none flex items-center justify-center cursor-pointer border",
+        mobile ? "w-7 h-7 rounded-[6px]" : "h-7 w-7 rounded-[6px]",
+        active
+          ? "border-[rgba(79,227,224,.4)] bg-[rgba(79,227,224,.1)] text-accent-soft"
+          : "border-[rgba(120,190,200,.16)] bg-[rgba(20,32,36,.6)] text-dim hover:border-[rgba(79,227,224,.45)] hover:text-text"
+      ),
+    },
+    h(FullscreenIcon, { active: active, size: mobile ? 14 : 13 })
+  );
+}
 
 export function MicButton(props) {
   var s = props.s;
@@ -483,7 +533,10 @@ export function Composer(props) {
             "SPACE hold to talk · ESC interrupt · 1·2·3 panels"
           )
         ),
-        h(MicBanner, { store: store, s: s })
+        h(MicBanner, { store: store, s: s }),
+        s.noSpeechHint
+          ? h("div", { className: "mt-[6px] text-[11px] text-faint italic", role: "status", "aria-live": "polite" }, s.noSpeechHint)
+          : null
       )
     )
   );

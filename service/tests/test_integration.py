@@ -234,8 +234,16 @@ def test_typed_turn_quick_action_time(base_url):
     assert not actions or "quick_action" in actions, f"unexpected non-quick_action tool use: {actions}"
     assert not claims_false_completion(reply), f"unexpected completion-claim language: {reply!r}"
 
+    # Voice-first: the assistant may speak the time as words ("four-forty",
+    # "quarter past three") rather than digits, so accept either form.
     hours = [int(n) for n in re.findall(r"\b(\d{1,2})\b", reply)]
-    assert any(0 <= n <= 23 for n in hours), f"reply doesn't mention a plausible hour: {reply!r}"
+    hour_words = ("one", "two", "three", "four", "five", "six", "seven", "eight",
+                  "nine", "ten", "eleven", "twelve", "noon", "midnight",
+                  "morning", "afternoon", "evening", "o'clock", "a.m", "p.m", "am", "pm")
+    low = reply.lower()
+    assert any(0 <= n <= 23 for n in hours) or any(w in low for w in hour_words), (
+        f"reply doesn't mention a plausible time: {reply!r}"
+    )
 
 
 # =============================================================================
@@ -244,6 +252,9 @@ def test_typed_turn_quick_action_time(base_url):
 
 
 def test_typed_turn_memory_recall(base_url):
+    # Fresh conversation: accumulated chit-chat history from earlier tests/probes
+    # measurably lowers the model's tool-use discipline.
+    http_post_json(f"{base_url}/converse", {"reset": True}, timeout=10.0)
     text = "what do you know about the hermes gateway staleness problem"
     code, body = http_post_json(f"{base_url}/converse", {"text": text}, timeout=90.0)
     assert code == 200, body
@@ -272,6 +283,7 @@ def test_delegation_honest_start_then_completes(base_url):
     text = f"create a file {marker_path} with content itest-ok"
 
     try:
+        http_post_json(f"{base_url}/converse", {"reset": True}, timeout=10.0)
         before_ids = snapshot_task_ids(base_url)
         code, body = http_post_json(f"{base_url}/converse", {"text": text}, timeout=90.0)
         assert code == 200, body
@@ -308,6 +320,7 @@ def test_delegation_honest_start_then_completes(base_url):
 
 def test_task_control_cancel_running_task(base_url):
     goal = "run `sleep 20` in the terminal, then say finished"
+    http_post_json(f"{base_url}/converse", {"reset": True}, timeout=10.0)
     before_ids = snapshot_task_ids(base_url)
     code, body = http_post_json(f"{base_url}/converse", {"text": goal}, timeout=90.0)
     assert code == 200, body

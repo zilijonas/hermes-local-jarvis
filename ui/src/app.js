@@ -16,7 +16,7 @@ import { createJarvisSocket } from "./ws.js";
 import { createMicInput } from "./audio-in.js";
 import { createAudioOutput } from "./audio-out.js";
 import { createVisualizer } from "./visualizer/index.js";
-import { Stage, derivedState } from "./components/stage.js";
+import { Stage, derivedState, FullscreenButton } from "./components/stage.js";
 import { MemoryColumn } from "./components/memory.js";
 import { WorkColumn } from "./components/work.js";
 import { MobileShell } from "./components/mobile.js";
@@ -40,6 +40,7 @@ var TIMELINE_ICON = {
   health: "♥",
   error: "✕",
   "turn.text": "✎",
+  "stt.ignored": "⊘",
 };
 
 function loadLocalBool(key, fallback) {
@@ -105,6 +106,25 @@ function backoffForAttempt(attempt) {
   return Math.min(1000 * Math.pow(2, Math.max(0, attempt - 1)), 10000);
 }
 
+// Fullscreen targets the plugin root itself (not <html>/<body>) so it keeps
+// its own background while fullscreen (see ui/README.md — bg lives on
+// #jarvis-voice-root already). webkit* fallback covers Safari, which still
+// lacks the unprefixed Fullscreen API.
+function isFullscreenActive() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+function toggleFullscreen() {
+  if (isFullscreenActive()) {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    return;
+  }
+  var root = document.getElementById("jarvis-voice-root");
+  if (!root) return;
+  if (root.requestFullscreen) root.requestFullscreen();
+  else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
+}
+
 // ---------------------------------------------------------------------------
 
 export function App() {
@@ -161,6 +181,8 @@ export function App() {
       retryAt: 0,
       lastEventTs: 0,
       offlineDismissed: false,
+      fullscreen: typeof document !== "undefined" && !!(document.fullscreenElement || document.webkitFullscreenElement),
+      noSpeechHint: null,
     });
   }
   var store = storeRef.current;
@@ -191,6 +213,7 @@ export function App() {
   // written on EVERY ws event (incl. tts.amp at ~30Hz) — kept out of the
   // store so it can't re-render the tree; copied in when going offline.
   var lastEventTsRef = useRef(0);
+  var noSpeechTimerRef = useRef(null);
 
   function pushTimeline(type, label, detail, tone) {
     store.set(function (st) {
@@ -212,12 +235,23 @@ export function App() {
     });
   }
 
-  function pushTurn(role, text, meta) {
+  // opts: { dim, tone } — dim renders the turn faint (stt.ignored echoes),
+  // tone "red" flags a system row as an error (turn failed / timed out) so
+  // the conversation always shows why nothing was answered, never silence.
+  function pushTurn(role, text, meta, opts) {
     store.set(function (st) {
       return {
         turns: pushCapped(
           st.turns,
-          { id: role + ":" + Date.now() + ":" + Math.random(), role: role, text: text, time: fmtClock(Date.now()), meta: meta || [] },
+          {
+            id: role + ":" + Date.now() + ":" + Math.random(),
+            role: role,
+            text: text,
+            time: fmtClock(Date.now()),
+            meta: meta || [],
+            dim: !!(opts && opts.dim),
+            tone: (opts && opts.tone) || null,
+          },
           TURNS_MAX
         ),
       };
@@ -277,6 +311,17 @@ export function App() {
       .catch(function () {
         /* basic hits already shown; enrichment is best-effort */
       });
+  }
+
+  // "didn't catch that" — subtle, self-clearing composer hint for the
+  // server's "no speech recognized" state detail. Re-triggering restarts the
+  // 3s window rather than stacking timers.
+  function showNoSpeechHint() {
+    clearTimeout(noSpeechTimerRef.current);
+    store.set({ noSpeechHint: "Didn't catch that." });
+    noSpeechTimerRef.current = setTimeout(function () {
+      store.set({ noSpeechHint: null });
+    }, 3000);
   }
 
   function resync(announce) {
@@ -373,6 +418,17 @@ export function App() {
           if (msg.value === "listening") beginTurn();
           if (msg.value === "done" || msg.value === "idle") commitReply(msg.value);
           if (msg.value === "interrupted") commitReply("interrupted");
+          // Detail-driven outcomes, independent of msg.value — a timeout or
+          // no-speech result can ride on any state value the server chooses,
+          // so match on the detail string itself rather than enumerating
+          // (state, detail) pairs.
+          if (msg.detail === "turn timed out") {
+            pushTurn("system", "Turn failed: timed out waiting for a reply.", [], { tone: "red" });
+            turnMetaRef.current = [];
+            store.set({ mediatorText: "", speakingText: "" });
+          } else if (msg.detail === "no speech recognized") {
+            showNoSpeechHint();
+          }
           // "listening" is just the mic.start ack — only states beyond it
           // prove the pipeline heard real input (silence-hint logic).
           if (msg.value !== "idle" && msg.value !== "listening") micHeardActivity = true;
@@ -390,6 +446,22 @@ export function App() {
           recordLatency("stt", msg.ms);
           micHeardActivity = true;
           if (store.get().micHint) store.set({ micHint: null });
+          break;
+        case "stt.ignored":
+          // Backend decided this was an echo of Jarvis's own speech (barge-in
+          // false-positive) and dropped it before the turn pipeline — the
+          // transcript must still show it happened, just visibly discarded,
+          // rather than vanishing with no trace.
+          if (msg.text) {
+            pushTurn("user", msg.text, ["ignored — " + (msg.reason || "echo")], { dim: true });
+          }
+          pushTimeline(
+            "stt.ignored",
+            "Ignored: “" + (msg.text || "") + "” (" + (msg.reason || "echo") + ")",
+            detailString(msg),
+            "amber"
+          );
+          micHeardActivity = true;
           break;
         case "mediator.delta":
           store.set(function (st) {
@@ -472,6 +544,13 @@ export function App() {
             return { errCount: st.errCount + 1 };
           });
           pushTimeline("error", msg.message || "error", detailString(msg), "red");
+          // Every server "error" event is a turn/pipeline failure reported
+          // over the socket (distinct from the local mic onError callback
+          // below) — it must land in the conversation too, not just the
+          // timeline, so the transcript never just goes quiet.
+          pushTurn("system", msg.message || "Turn failed — no reply.", [], { tone: "red" });
+          turnMetaRef.current = [];
+          store.set({ mediatorText: "", speakingText: "" });
           break;
         case "pong":
           break;
@@ -563,6 +642,11 @@ export function App() {
         interrupt();
         return;
       }
+      if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && String(e.key).toLowerCase() === "f") {
+        e.preventDefault();
+        toggleFullscreen();
+        return;
+      }
       if (!typing && ["1", "2", "3"].indexOf(e.key) >= 0) {
         store.set({ tab: ["work", "activity", "system"][+e.key - 1] });
       }
@@ -615,6 +699,21 @@ export function App() {
       }
     };
     // eslint-disable-next-line
+  }, []);
+
+  // ---- fullscreen: sync store.fullscreen to the real DOM state -----------
+  // Covers all exit paths (Esc key, browser chrome, programmatic exit
+  // elsewhere) — not just our own toggle button/keybinding.
+  useEffect(function () {
+    function onFsChange() {
+      store.set({ fullscreen: isFullscreenActive() });
+    }
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener("webkitfullscreenchange", onFsChange);
+    return function () {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener("webkitfullscreenchange", onFsChange);
+    };
   }, []);
 
   // ---- root width (drives the 1280/860 layout modes, prototype-style) -----
@@ -791,6 +890,7 @@ export function App() {
           return { reducedMotion: !st.reducedMotion };
         });
       },
+      toggleFullscreen: toggleFullscreen,
     };
   }
   var act = actRef.current;
@@ -879,6 +979,7 @@ function SystemBar(props) {
       }),
       h("div", { className: "text-[11px] text-[#C8DBDE] tracking-[.02em]" }, conn[1])
     ),
+    h(FullscreenButton, { active: s.fullscreen, onClick: act.toggleFullscreen }),
     h(
       "button",
       {

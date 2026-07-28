@@ -50,6 +50,8 @@ class Pipeline:
         self._loop = asyncio.get_event_loop()
         self._announce_queue: list[str] = []
         self._turn_active = False
+        self._tts_last_end = 0.0          # echo rejection only near real playback
+        self._pending_voiced_ms = 0.0     # two-stage barge-in accumulator
         workers.on_task_event = self._on_task_event  # optional hook
         workers.wait_turn_clear = self._wait_turn_clear
 
@@ -91,26 +93,33 @@ class Pipeline:
         else:
             self._set_state("idle")
 
+    # Sustained-voice thresholds before an interrupt fires. A lone VAD blip
+    # (keyboard, breath, chair) must never cancel a turn — only real speech.
+    _BARGE_MS_SPEAKING = 240
+    _BARGE_MS_THINKING = 600
+
     def feed_audio(self, chunk: bytes) -> None:
         if not self.mic_active:
             return
         for kind, payload in self.vad.feed(chunk):
             if kind == "speech_start":
-                # Interrupt whatever Jarvis is doing — speaking OR still thinking.
-                # Talking over a person mid-thought redirects them; same here.
-                if self._speaking or (self._turn_task and not self._turn_task.done()):
-                    self.barge_in("voice detected")
+                self._pending_voiced_ms = 0.0
             elif kind == "chunk":
                 self._utt_buf.extend(payload)
                 self._maybe_partial()
+                busy = self._speaking or (self._turn_task and not self._turn_task.done())
+                if busy and self._pending_voiced_ms >= 0:
+                    self._pending_voiced_ms += 20.0  # one VAD frame
+                    need = (self._BARGE_MS_SPEAKING if self._speaking
+                            else self._BARGE_MS_THINKING)
+                    if self._pending_voiced_ms >= need:
+                        self.barge_in("sustained voice")
+                        self._pending_voiced_ms = float("-inf")  # once per utterance
             elif kind == "speech_end":
+                self._pending_voiced_ms = 0.0
                 pcm = bytes(payload)
                 self._utt_buf.clear()
-                if self.mode == "vad" or not self.mic_active:
-                    self._spawn_turn(pcm)
-                else:
-                    # PTT: endpoint fired but button still held — treat as done.
-                    self._spawn_turn(pcm)
+                self._spawn_turn(pcm)
 
     def _maybe_partial(self) -> None:
         if self._partial_task and not self._partial_task.done():
@@ -177,10 +186,35 @@ class Pipeline:
         if was_speaking or (self._turn_task and not self._turn_task.done()):
             self._set_state("interrupted", detail=reason)
             metrics.counter("barge_ins")
+            self._tts_last_end = time.monotonic()
+            # If the interrupting sound never becomes an utterance (noise blip that
+            # slipped through), don't stay stuck in "interrupted" forever.
+            asyncio.get_running_loop().create_task(self._interrupt_recovery())
+
+    async def _interrupt_recovery(self) -> None:
+        await asyncio.sleep(2.0)
+        if (self.state == "interrupted" and not self._speaking
+                and not (self._turn_task and not self._turn_task.done())):
+            self._set_state("idle")
+            self._drain_announcements()
 
     # ------------------------------------------------------------- turns
     def _spawn_turn(self, pcm: bytes) -> None:
-        self._turn_task = asyncio.get_running_loop().create_task(self._voice_turn(pcm))
+        task = asyncio.get_running_loop().create_task(self._voice_turn(pcm))
+        self._turn_task = task
+
+        def _surface(t: asyncio.Task) -> None:
+            # A voice turn must never die silently: the user saw their transcript,
+            # they get either a reply, an explicit ignore, or an explicit error.
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                self.bus.publish({"t": "error",
+                                  "message": f"turn failed: {exc}"[:300],
+                                  "recoverable": True})
+                self._set_state("idle")
+        task.add_done_callback(_surface)
 
     async def _voice_turn(self, pcm: bytes) -> None:
         turn_id = f"t{int(time.time() * 1000) % 10 ** 10}"
@@ -191,11 +225,13 @@ class Pipeline:
         metrics.record("stt", ms_stt)
 
         if not text.strip():
-            self._set_state("idle")
+            self._set_state("idle", detail="no speech recognized")
             return
         if self._echo_of_own_speech(text):
-            self.bus.publish({"t": "state", "value": "idle", "detail": "echo rejected"})
-            self.state = "idle"
+            # Visible, honest ignore — the transcript must not just vanish.
+            self.bus.publish({"t": "stt.ignored", "reason": "echo of my own speech",
+                              "text": text, "turn_id": turn_id})
+            self._set_state("idle", detail="echo rejected")
             return
         await self.run_turn(text, turn_id=turn_id, t_endpoint=t_endpoint)
 
@@ -238,11 +274,19 @@ class Pipeline:
                                   "phase": phase, "turn_id": turn_id})
 
             try:
-                result = await self.mediator.turn(
-                    text, tools=self._dispatch_meta_tool,
-                    on_delta=on_delta, on_tool=on_tool, cancel=self._tts_cancel)
+                # Hard cap: a wedged mediator/tool must never leave the assistant
+                # deaf-mute behind the turn lock.
+                result = await asyncio.wait_for(
+                    self.mediator.turn(
+                        text, tools=self._dispatch_meta_tool,
+                        on_delta=on_delta, on_tool=on_tool, cancel=self._tts_cancel),
+                    timeout=90.0)
+            except asyncio.TimeoutError:
+                self._set_state("error", detail="turn timed out")
+                sentence_q.put_nowait(None)
+                await asyncio.gather(speak_task, return_exceptions=True)
+                return {"reply_text": "", "error": "turn timed out", "turn_id": turn_id}
             except asyncio.CancelledError:
-                self.mediator.note_interrupted(text)
                 sentence_q.put_nowait(None)
                 await asyncio.gather(speak_task, return_exceptions=True)
                 raise
@@ -320,6 +364,7 @@ class Pipeline:
                 metrics.record("tts_first_chunk", stats.get("ms_first_chunk", 0))
                 first = False
         self._speaking = False
+        self._tts_last_end = time.monotonic()
         if not (cancel and cancel.is_set()):  # barge_in already sent an interrupted tts.end
             self.bus.publish({"t": "tts.end", "turn_id": turn_id})
 
@@ -331,7 +376,14 @@ class Pipeline:
         return text, (time.monotonic() - t0) * 1000
 
     def _echo_of_own_speech(self, text: str) -> bool:
-        """Half-duplex leak guard: transcript ≈ tail of what Jarvis just said."""
+        """Speaker-leak guard: transcript ≈ tail of what Jarvis just said.
+
+        Only meaningful while playback is running or just ended — a user
+        utterance from silence can legitimately reuse Jarvis's words and must
+        NEVER be eaten (that was the 'transcript disappears' bug)."""
+        near_playback = self._speaking or (time.monotonic() - self._tts_last_end) < 2.5
+        if not near_playback:
+            return False
         last = (self.mediator.last_reply or "")[-300:].lower()
         if not last or len(text) < 12:
             return False

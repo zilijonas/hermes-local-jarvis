@@ -1,5 +1,29 @@
 # Jarvis Voice — Final Delivery Report (2026-07-27, fixes 2026-07-28, redesign 2026-07-28)
 
+## Field-bug fixes round 3 (2026-07-28)
+From live-use reports:
+- **Vanishing transcripts / silent no-response**: echo rejection was firing on
+  *every* utterance and eating short user phrases that reused Jarvis's words. Now
+  scoped to a 2.5 s window after real playback; a rejected utterance shows a visible
+  "ignored — echo" chip instead of disappearing. Every voice turn now ends in a
+  reply, an explicit ignore, or a visible error (done-callback surfaces exceptions;
+  90 s turn watchdog) — never silence.
+- **Phantom "interrupted" while thinking**: barge-in now needs sustained real voice
+  (240 ms while speaking, 600 ms while thinking) + stricter VAD (aggressiveness 3),
+  so noise blips can't cancel a turn; a stray "interrupted" self-recovers to idle.
+- **Continue after interruption**: the cut-off answer's partial text is kept in
+  history; the prompt picks up where it left off on "continue".
+- **Speed**: warm first-audio ~2.3 s p50; short-opener prompt so the first spoken
+  sentence lands fast.
+- **Raw JSON leaking into speech**: a trailing tool-call the model tacked after prose
+  was being voiced — now stripped by a speakable-prefix guard (unit-tested).
+- **Routing/quality**: `quick_action system.status` scoped to Jarvis's own health, so
+  Mac hardware/disk queries delegate to a worker; vague requests ask one clarifying
+  question instead of guessing.
+- **UI**: fullscreen toggle (system bar + mobile, `f` key), nicer nav icon (Sparkles —
+  the old AudioWaveform wasn't even in the host's icon map, silently rendered as a
+  puzzle piece), honest ignored/error/no-speech rows in the conversation log.
+
 ## Command Centre redesign + conversation hardening (2026-07-28, round 2)
 UI fully rebuilt to the claude.ai/design "Jarvis Command Centre" prototype (design/
 holds the pulled artifacts): anchored-core three-column layout (SystemBar · Memory ·

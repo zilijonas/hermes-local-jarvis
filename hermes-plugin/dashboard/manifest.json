@@ -1,8 +1,8 @@
 {
   "name": "jarvis-voice",
   "label": "Jarvis",
-  "icon": "AudioWaveform",
-  "version": "0.1.0",
+  "icon": "Sparkles",
+  "version": "0.3.0",
   "tab": { "path": "/jarvis", "position": "start" },
   "entry": "dist/index.js",
   "css": "dist/style.css",

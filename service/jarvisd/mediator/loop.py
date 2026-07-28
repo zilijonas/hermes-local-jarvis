@@ -45,6 +45,7 @@ class Mediator:
         self.tool_stats = {"calls": 0, "parse_errors": 0}
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.0))
         self.last_reply = ""
+        self._partial_spoken = ""
 
     # ------------------------------------------------------------------
     def notify_task_event(self, task: dict) -> None:
@@ -52,13 +53,23 @@ class Mediator:
         if len(self.pending_events) > 6:
             self.pending_events = self.pending_events[-6:]
 
-    def note_interrupted(self, user_text: str) -> None:
-        """Record a turn the user cut off, so the next turn has honest context
-        instead of a hole — makes 'as I was saying…' style continuity possible."""
+    def _record_interrupted(self, user_text: str, partial: str) -> None:
+        """Record a cut-off turn WITH whatever was already said, so 'continue'
+        actually works — the unfinished answer stays available to the model."""
+        if partial.strip():
+            note = f"[interrupted mid-answer; I had said: \"{partial.strip()[:400]}\"]"
+        else:
+            note = "[the user interrupted before I answered]"
         self.history.append({"role": "user", "content": user_text})
-        self.history.append({"role": "assistant",
-                             "content": "[the user interrupted before I answered]"})
+        self.history.append({"role": "assistant", "content": note})
         self.history = self.history[-2 * self.history_turns:]
+
+    def reset(self) -> None:
+        """Start a fresh conversation (user-facing 'new conversation' + tests)."""
+        self.history.clear()
+        self.pending_events.clear()
+        self.last_reply = ""
+        self._partial_spoken = ""
 
     def component_status(self) -> dict[str, Any]:
         return {"ok": True, "detail": f"{self.model}, {len(self.history) // 2} turns held"}
@@ -91,27 +102,52 @@ class Mediator:
         self.pending_events.clear()
         msgs.append({"role": "user", "content": user_text})
 
+        try:
+            return await self._turn_body(user_text, msgs, tools, on_delta, on_tool,
+                                         cancel, t0, first_token_ms)
+        except asyncio.CancelledError:
+            # Barge-in: keep the partial answer in history so the user can say
+            # "continue" and get the rest instead of a restart.
+            self._record_interrupted(user_text, self._partial_spoken)
+            raise
+
+    async def _turn_body(self, user_text: str, msgs: list[dict],
+                         tools: MetaToolHandler,
+                         on_delta: Callable[[str], None],
+                         on_tool: Callable[[str, dict, str], None],
+                         cancel: asyncio.Event, t0: float,
+                         first_token_ms: Optional[float]) -> dict[str, Any]:
         spoken = ""
         tool_calls: list[dict] = []
         parse_retry_used = False
+        self._partial_spoken = ""
 
         for _hop in range(MAX_TOOL_HOPS + 1):
             if cancel.is_set():
                 break
-            buf, emitted, got_first = "", 0, first_token_ms
+            buf, spoke_len = "", len(spoken)
+            for_this_hop = ""
             async for delta in self._stream(msgs, cancel):
                 if first_token_ms is None:
                     first_token_ms = (time.monotonic() - t0) * 1000
                 buf += delta
-                # Hold back output while it could still be a JSON tool line.
-                if not spoken and buf.lstrip()[:1] == "{":
-                    continue
-                on_delta(delta)
-                emitted += len(delta)
-                spoken += delta
+                # Emit only the "speakable" prefix: text up to a line that begins a
+                # JSON tool object. Catches both a leading tool call (nothing spoken)
+                # and a trailing one the model tacks on AFTER prose (the JSON-leak
+                # bug) — everything from `{`-at-line-start on is withheld from speech.
+                speakable = self._speakable_prefix(buf)
+                new = speakable[len(for_this_hop):]
+                if new:
+                    on_delta(new)
+                    for_this_hop = speakable
+                    spoken += new
+                    self._partial_spoken = spoken
 
             stripped = buf.strip()
-            if not spoken and _JSON_LINE.match(stripped):
+            # Anything that *starts* like a tool call is treated as one — including
+            # truncated/malformed JSON (e.g. cut by num_predict). Raw JSON must
+            # never leak into speech; the parse-retry path handles bad shapes.
+            if not spoken and stripped.startswith("{"):
                 call = self._parse_tool(stripped)
                 if call is None:
                     self.tool_stats["parse_errors"] += 1
@@ -150,14 +186,17 @@ class Mediator:
 
         spoken = spoken.strip()
         if not spoken and not cancel.is_set():
-            # Empty completion (Ollama under load / model just evicted). Retry once
-            # silently — the reload usually succeeds — before admitting confusion.
+            # Empty/failed completion. Retry once with an explicit nudge — an
+            # identical retry tends to reproduce the identical failure.
             try:
+                retry_msgs = msgs + [{"role": "system", "content":
+                                      "Answer the user now in plain spoken English. "
+                                      "Do not use a tool."}]
                 retry_buf = ""
-                async for delta in self._stream(msgs, cancel):
+                async for delta in self._stream(retry_msgs, cancel):
                     retry_buf += delta
                 retry_buf = retry_buf.strip()
-                if retry_buf and not _JSON_LINE.match(retry_buf):
+                if retry_buf and not retry_buf.startswith("{"):
                     spoken = retry_buf
                     on_delta(spoken)
             except Exception:
@@ -183,7 +222,7 @@ class Mediator:
                    "keep_alive": self.keep_alive,
                    "options": {"num_ctx": self.num_ctx,
                                "temperature": self.temperature,
-                               "num_predict": 220}}
+                               "num_predict": 320}}
         async with self._client.stream("POST", f"{self.url}/api/chat",
                                        json=payload) as r:
             r.raise_for_status()
@@ -201,6 +240,20 @@ class Mediator:
                 delta = (chunk.get("message") or {}).get("content") or ""
                 if delta:
                     yield delta
+
+    @staticmethod
+    def _speakable_prefix(buf: str) -> str:
+        """Text safe to speak: everything before a line that begins a JSON tool
+        object. A leading `{` → nothing speakable; a `{` after prose → the prose
+        only (the trailing tool JSON is withheld, never voiced)."""
+        s = buf.lstrip()
+        if s.startswith("{"):
+            return ""
+        idx = buf.find("\n{")
+        if idx == -1:
+            # also guard a `{` that opens right after a space at line-ish boundary
+            return buf
+        return buf[:idx]
 
     @staticmethod
     def _parse_tool(text: str) -> Optional[tuple[str, dict]]:

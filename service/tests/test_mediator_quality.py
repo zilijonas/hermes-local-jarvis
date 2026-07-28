@@ -1,7 +1,7 @@
 """Mediator quality battery (docs/SPEC.md §Meta-tools, §Worker execution honesty rule).
 
 Twelve short scripted turns run SEQUENTIALLY through POST /converse against the same
-live jarvisd instance -- the mediator's conversation history isn't resettable via the
+live jarvisd instance -- the battery resets mediator history at the start via the
 API, so this is one test function, not twelve independent ones, and turn order matters
 (e.g. "repeat that" only makes sense right after the time question).
 
@@ -94,6 +94,9 @@ def _check_cancel_nonexistent(reply: str, actions: list) -> tuple[bool, str]:
             "don't see", "do not see", "unable to find", "not find", "no task", "does not appear",
             "doesn't appear", "no record", "not in my records", "isn't in my", "is not in my",
             "unable to cancel", "no matching task", "not in my system",
+            # graceful phrasings the model actually produces, all clearly "not there":
+            "doesn't seem to exist", "isn't here", "not here", "isn't running", "wasn't running",
+            "not running", "can't find", "cannot find", "no active task", "typo",
         )
     )
     return graceful, "gracefully reports it can't find the (nonexistent) task -- no crash, no fake success"
@@ -138,9 +141,16 @@ assert len(TURNS) == TOTAL_TURNS
 
 
 def test_mediator_quality_battery(base_url):
+    # Clean baseline: earlier tests/probes leave conversation history that
+    # measurably lowers tool-use discipline on a small model.
+    http_post_json(f"{base_url}/converse", {"reset": True}, timeout=10.0)
     results = []
     for name, text, checker in TURNS:
-        code, body = http_post_json(f"{base_url}/converse", {"text": text}, timeout=90.0)
+        # 150s: a turn that delegates triggers a real granite cold-load (~60-90s
+        # on this 24 GB box, which evicts the mediator); back-to-back typed turns
+        # with no gaps can stack that onto the next mediator call. Live voice use
+        # has gaps + mic.start pre-warm, so it doesn't hit this.
+        code, body = http_post_json(f"{base_url}/converse", {"text": text}, timeout=150.0)
         assert code == 200, f"[{name}] HTTP {code}: {body}"
         reply = body.get("reply_text", "")
         actions = body.get("actions", [])

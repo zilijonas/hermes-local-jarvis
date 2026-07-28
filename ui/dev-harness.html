@@ -63,6 +63,10 @@
   <button id="hz-turn">▶ RUN TURN</button>
   <button id="hz-memory">memory.hits</button>
   <button id="hz-task">task.update</button>
+  <button id="hz-ignored">stt.ignored</button>
+  <button id="hz-error">error (turn failed)</button>
+  <button id="hz-nospeech">no speech</button>
+  <button id="hz-timeout">turn timed out</button>
   <button id="hz-offline">go offline</button>
   <div class="hz-sep"></div>
   <span class="hz-tag" style="width:auto">WIDTH</span>
@@ -440,6 +444,19 @@
   document.getElementById("hz-memory").onclick = function () { serverEvent({ t: "memory.hits", items: MEM_HITS }); };
   document.getElementById("hz-task").onclick = function () {
     serverEvent({ t: "task.update", id: "tk_9f31", status: "running", title: TASKS[0].title, kind: "granite", progress_note: "embedding batch " + (8 + Math.floor(Math.random() * 4)) + "/12" });
+  };
+  // ---- honest-turn-outcome injectors (stt.ignored / error / no-speech / timeout) ----
+  document.getElementById("hz-ignored").onclick = function () {
+    serverEvent({ t: "stt.ignored", reason: "echo of my own speech", text: "so anyway I think the deploy is", turn_id: ++turnSeq });
+  };
+  document.getElementById("hz-error").onclick = function () {
+    serverEvent({ t: "error", message: "turn failed: mediator stream reset after 3 retries", turn_id: turnSeq });
+  };
+  document.getElementById("hz-nospeech").onclick = function () {
+    serverEvent({ t: "state", value: "idle", detail: "no speech recognized", turn_id: turnSeq });
+  };
+  document.getElementById("hz-timeout").onclick = function () {
+    serverEvent({ t: "state", value: "idle", detail: "turn timed out", turn_id: turnSeq });
   };
 
   // ---- offline toggle ----
