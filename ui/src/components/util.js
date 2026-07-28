@@ -122,10 +122,25 @@ export function countOpenTasks(taskMap) {
     return t.status === "running" || t.status === "queued" || t.status === "paused";
   }).length;
 }
-export function countActionableTasks(taskMap) {
+export function countActionableTasks(taskMap, dismissedTasks) {
   return Object.values(taskMap || {}).filter(function (t) {
+    if (isDismissed(dismissedTasks, t.id)) return false;
     return t.status === "running" || t.status === "queued" || t.status === "paused" || t.status === "needs_review";
   }).length;
+}
+
+// Client-side "Dismiss" (see components/work.js) hides needs_review/done/
+// failed cards without any backend delete — dismissedTasks is a
+// {taskId: statusAtDismissTime} map (persisted to localStorage by app.js) so
+// a *genuinely new* status arriving via task.update can un-dismiss it later,
+// while a plain re-render of the same status stays hidden.
+export function isDismissed(dismissedTasks, id) {
+  return !!(dismissedTasks && Object.prototype.hasOwnProperty.call(dismissedTasks, id));
+}
+export function visibleTasks(taskMap, dismissedTasks) {
+  return sortTasks(taskMap).filter(function (t) {
+    return !isDismissed(dismissedTasks, t.id);
+  });
 }
 
 // Elapsed seconds for a task row; prefers real started/created timestamps,

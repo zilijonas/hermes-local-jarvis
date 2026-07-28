@@ -1,5 +1,30 @@
 # Jarvis Voice — Final Delivery Report (2026-07-27, fixes 2026-07-28, redesign 2026-07-28)
 
+## Field-bug round 5 (2026-07-28) — concurrency, mobile, RAM
+- **Loud fan / RAM (#7)**: granite's 64k-context KV cache (11 GB) co-resident with
+  gemma drove swap to 40/40 GB and active paging. `OLLAMA_MAX_LOADED_MODELS=1` +
+  `KEEP_ALIVE=3m` (ollama-serve.sh) → free RAM 22%→70% idle; under a live delegation
+  swap stays flat (no active thrash), one model resident at a time.
+- **Dropped follow-up / re-delegated task (#2)**: replaced the single `_unanswered`
+  slot with a serial turn QUEUE — a follow-up spoken mid-turn is answered as the next
+  turn, both questions handled, no in-flight task cancelled/re-fired. Barge-in now only
+  stops audio. Verified live (tests/live_concurrent_followup.py).
+- **Hollow promises (#2)**: no live internet, so weather/news are answered honestly
+  ("I can't look that up") instead of granite fabricating; web capabilities removed.
+- **Silent failures / audio↔text (#2)**: turn timeouts + exceptions emit spoken-grade
+  error events; spoken task announcements are now ALSO written to the conversation log.
+- **Tool reliability (#2)**: malformed tool JSON retry is grammar-constrained via
+  Ollama's native `format` (schema over the valid tool set).
+- **Mobile Dismiss (#1)**: was POSTing cancel; now a real client-side dismiss
+  (localStorage-persisted, filters all task views, un-dismiss on genuinely new status).
+- **Mobile mic dead (#4)**: not a wiring bug — the host dashboard's floating chat FAB
+  physically overlapped the mic button and ate taps; composer now reserves runtime
+  clearance around the measured host launcher.
+- **Sheet drag (#3)**: bottom sheets are pointer-draggable with snap to half/full/closed,
+  safe-area aware, reduced-motion aware.
+- **Mobile fullscreen (#5)**: feature-detected with a pseudo-fullscreen fallback for
+  iOS Safari; fixed a host-stacking-context trap that hid the exit control.
+
 ## Interrupt-resume (2026-07-28, round 4)
 Interruption no longer drops an unanswered message. The pipeline tracks whether the
 current message was *answered* — a flag set when the turn starts and cleared the

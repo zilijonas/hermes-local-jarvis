@@ -533,6 +533,13 @@ class Pipeline:
 
     async def _announce_locked(self, text: str) -> None:
         self._tts_cancel = asyncio.Event()
+        turn_id = f"a{int(time.time() * 1000) % 10 ** 10}"
+        # Anything spoken is ALSO shown in the conversation log — no audio-only
+        # message the user can't scroll back to (goal #2 audio↔text completeness).
+        self.bus.publish({"t": "mediator.delta", "text": text, "turn_id": turn_id,
+                          "kind": "announcement"})
+        self.bus.publish({"t": "mediator.done", "text": text, "turn_id": turn_id,
+                          "kind": "announcement", "ms_first_token": 0, "ms_total": 0})
         self._set_state("speaking", detail="task announcement")
         self._speaking = True
         loop = asyncio.get_running_loop()
@@ -545,6 +552,7 @@ class Pipeline:
                              voice=self.cfg.tts.voice, speed=self.cfg.tts.speed,
                              cancel_event=self._tts_cancel)
         self._speaking = False
+        self.bus.publish({"t": "tts.end", "turn_id": turn_id})
         self._set_state("idle")
         self._drain_announcements()
 

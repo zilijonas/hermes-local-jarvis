@@ -339,12 +339,18 @@ function FullscreenIcon(props) {
 export function FullscreenButton(props) {
   var active = props.active;
   var mobile = props.mobile;
+  var pseudo = props.pseudo;
   return h(
     "button",
     {
       onClick: props.onClick,
       "aria-label": "Toggle fullscreen",
       "aria-pressed": active,
+      // On browsers without a real Fullscreen API for arbitrary elements
+      // (notably older iOS Safari) app.js falls back to a CSS-only
+      // pseudo-fullscreen — label it so it's obvious in devtools/QA that
+      // the fallback path fired rather than the native one.
+      title: pseudo ? "Pseudo-fullscreen (Fullscreen API unavailable on this browser)" : undefined,
       className: cls(
         "flex-none flex items-center justify-center cursor-pointer border",
         mobile ? "w-7 h-7 rounded-[6px]" : "h-7 w-7 rounded-[6px]",

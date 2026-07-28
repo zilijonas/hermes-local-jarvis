@@ -17,7 +17,7 @@ import {
   toneIconClass,
   toneRowClass,
   sparkPoints,
-  sortTasks,
+  visibleTasks,
   countOpenTasks,
   BTN,
   BTN_PRIMARY,
@@ -139,7 +139,14 @@ export function TaskCard(props) {
   if (t.status === "running" || t.status === "paused" || t.status === "queued") actions.push(["Cancel", BTN_DANGER, "cancel"]);
   if (t.status === "needs_review") {
     actions.push(["Re-delegate", BTN_WARN, "resume"]);
-    actions.push(["Dismiss", BTN, "cancel"]);
+    actions.push(["Dismiss", BTN, "dismiss"]);
+  }
+  // done/failed cards have nothing left to do but be cleared — "dismiss" is
+  // a pseudo-action (act.dismissTask, client-side only) handled separately
+  // from the real backend task-control actions above (see the click handler
+  // below and app.js's dismissedTasks store key).
+  if (t.status === "done" || t.status === "failed") {
+    actions.push(["Dismiss", BTN, "dismiss"]);
   }
 
   return h(
@@ -185,7 +192,8 @@ export function TaskCard(props) {
             className: a[1],
             "aria-label": a[0] + " task " + (t.title || t.id),
             onClick: function () {
-              act.taskControl(t.id, a[2]);
+              if (a[2] === "dismiss") act.dismissTask(t.id);
+              else act.taskControl(t.id, a[2]);
             },
           },
           a[0]
@@ -230,7 +238,10 @@ export function TaskCardMobile(props) {
   if (t.status === "running" || t.status === "paused" || t.status === "queued") actions.push(["Cancel", BTN_DANGER, "cancel"]);
   if (t.status === "needs_review") {
     actions.push(["Re-delegate", BTN_WARN, "resume"]);
-    actions.push(["Dismiss", BTN, "cancel"]);
+    actions.push(["Dismiss", BTN, "dismiss"]);
+  }
+  if (t.status === "done" || t.status === "failed") {
+    actions.push(["Dismiss", BTN, "dismiss"]);
   }
   return h(
     "div",
@@ -257,7 +268,8 @@ export function TaskCardMobile(props) {
                 className: a[1] + " !h-11 !px-[14px] !text-[13px]",
                 "aria-label": a[0] + " task " + (t.title || t.id),
                 onClick: function () {
-                  act.taskControl(t.id, a[2]);
+                  if (a[2] === "dismiss") act.dismissTask(t.id);
+                  else act.taskControl(t.id, a[2]);
                 },
               },
               a[0]
@@ -527,7 +539,7 @@ export function WorkColumn(props) {
   // if the memory tab was active and the column re-appears, fall back to work
   var tab = showLeft && s.tab === "memory" ? "work" : s.tab;
 
-  var tasks = sortTasks(s.tasks);
+  var tasks = visibleTasks(s.tasks, s.dismissedTasks);
 
   return h(
     "div",

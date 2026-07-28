@@ -9,7 +9,58 @@ import { cls } from "./util.js";
 import { StateCaption, ToolChip, MicButton, MicBanner, FullscreenButton, derivedState } from "./stage.js";
 import { TaskCardMobile, ActivityRows } from "./work.js";
 import { MemorySheetContent } from "./memory.js";
-import { statusChip, workerTag, countActionableTasks, sortTasks } from "./util.js";
+import { statusChip, workerTag, countActionableTasks, visibleTasks } from "./util.js";
+
+// The host dashboard renders its own floating "open chat" launcher
+// (`.floating-chat-launcher`) as position:fixed at the bottom-right of the
+// viewport, above our content — chrome we don't own and can't edit. Below
+// 860px that sits directly on top of the thumb composer's mic button (both
+// want the same bottom-right corner), silently swallowing every tap meant
+// for the mic (confirmed live: mic button rect [303,738,64,64] vs launcher
+// rect [314,768,52,52] on a 390x844 viewport — real overlap, not a wiring
+// bug). We can't touch the host's DOM/CSS, so measure the launcher (if
+// present) at runtime and reserve just enough horizontal clearance in our
+// own composer row to stay clear of it — self-heals if the host ever
+// resizes/repositions/removes that button, and is a no-op wherever it
+// doesn't exist (dev harness, future host versions, desktop widths).
+function useHostFabClearance(hooks) {
+  var useState = hooks.useState;
+  var useEffect = hooks.useEffect;
+  var pair = useState(0);
+  var clearance = pair[0];
+  var setClearance = pair[1];
+  useEffect(function () {
+    function measure() {
+      var fab = document.querySelector(".floating-chat-launcher");
+      if (!fab) {
+        setClearance(0);
+        return;
+      }
+      var rect = fab.getBoundingClientRect();
+      var cs = window.getComputedStyle(fab);
+      // Only reserve space for a fixed, bottom-right-anchored control —
+      // never trust the class name alone in case the host repurposes it.
+      if (
+        cs.position !== "fixed" ||
+        rect.width <= 0 ||
+        rect.right < window.innerWidth - 200 ||
+        rect.bottom < window.innerHeight - 200
+      ) {
+        setClearance(0);
+        return;
+      }
+      setClearance(Math.max(0, window.innerWidth - rect.left) + 10);
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    var t = setTimeout(measure, 400); // host chrome can mount after we do
+    return function () {
+      window.removeEventListener("resize", measure);
+      clearTimeout(t);
+    };
+  }, []);
+  return clearance;
+}
 
 function ConnDot(props) {
   var conn = props.conn;
@@ -23,7 +74,7 @@ function ConnDot(props) {
 
 function ActiveTaskChip(props) {
   var s = props.s;
-  var tasks = sortTasks(s.tasks);
+  var tasks = visibleTasks(s.tasks, s.dismissedTasks);
   var t = null;
   for (var i = 0; i < tasks.length; i++) {
     if (tasks[i].status === "running") {
@@ -137,15 +188,106 @@ function MobileConversation(props) {
   );
 }
 
+// Fraction of the sheet's container height for the resting "half" snap —
+// must match .jv-sheet-half in style.css (that class owns the actual CSS,
+// this constant only drives the JS snap-distance comparison while dragging).
+var SHEET_HALF_FRACTION = 0.62;
+var SHEET_MIN_HEIGHT = 96; // px — never drag smaller than this before closing
+var SHEET_CLOSE_DROP = 90; // px below the half snap that commits to closing
+
 function Sheet(props) {
   var store = props.store;
   var s = props.s;
   var act = props.act;
+  var hooks = getHooks();
+  var useRef = hooks.useRef;
+  var useState = hooks.useState;
+  var useEffect = hooks.useEffect;
+
+  var panelRef = useRef(null);
+  var dragRef = useRef(null); // { pointerId, startY, startHeight, parentHeight }
+  var snapPair = useState("half"); // 'half' | 'full' (resting point, no active drag)
+  var snap = snapPair[0];
+  var setSnap = snapPair[1];
+  var dragPair = useState(null); // live px height while the handle is being dragged
+  var dragHeight = dragPair[0];
+  var setDragHeight = dragPair[1];
+
+  // fresh sheet always opens at the half snap, never mid-drag
+  useEffect(
+    function () {
+      setSnap("half");
+      setDragHeight(null);
+    },
+    [s.sheet]
+  );
+
   if (!s.sheet) return null;
   var title = s.sheet === "tasks" ? "TASKS & WORKERS" : s.sheet === "memory" ? "MEMORY" : "ACTIVITY";
   function close() {
     store.set({ sheet: null });
   }
+
+  // Native-app-style drag: pointerdown on the handle captures the pointer,
+  // pointermove drives a live pixel height (1:1 with the finger), pointerup
+  // snaps to half/full or — if dragged down far enough — dismisses the
+  // sheet outright. Pointer Events (not touch/mouse-specific handlers) so
+  // this works identically for touch, mouse and pen with one code path.
+  function onDragPointerDown(e) {
+    var panel = panelRef.current;
+    if (!panel) return;
+    var parent = panel.parentElement;
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      startHeight: panel.getBoundingClientRect().height,
+      parentHeight: parent ? parent.getBoundingClientRect().height : window.innerHeight,
+    };
+    if (e.currentTarget.setPointerCapture) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch (err) {
+        /* pointer capture unsupported — drag still tracks via move/up */
+      }
+    }
+  }
+  function onDragPointerMove(e) {
+    var d = dragRef.current;
+    if (!d || e.pointerId !== d.pointerId) return;
+    var dy = e.clientY - d.startY; // finger moved down => dy > 0
+    var next = d.startHeight - dy; // dragging up (dy<0) grows the sheet
+    var max = Math.max(SHEET_MIN_HEIGHT, d.parentHeight - 24);
+    setDragHeight(Math.max(SHEET_MIN_HEIGHT, Math.min(max, next)));
+  }
+  function endDrag(e) {
+    var d = dragRef.current;
+    if (!d || (e && e.pointerId !== d.pointerId)) return;
+    dragRef.current = null;
+    var halfH = d.parentHeight * SHEET_HALF_FRACTION;
+    var fullH = d.parentHeight - 24;
+    var lastHeight = dragHeight != null ? dragHeight : d.startHeight;
+    if (lastHeight < halfH - SHEET_CLOSE_DROP) {
+      setDragHeight(null);
+      close();
+      return;
+    }
+    var nearFull = Math.abs(lastHeight - fullH) < Math.abs(lastHeight - halfH);
+    setSnap(nearFull ? "full" : "half");
+    setDragHeight(null);
+  }
+
+  var dragging = dragHeight != null;
+  var panelClassName = cls(
+    "flex-none flex flex-col rounded-t-[18px] border-t border-[rgba(120,190,200,.16)] bg-surface shadow-e2 jv-rise",
+    !dragging ? (snap === "full" ? "jv-sheet-full" : "jv-sheet-half") : ""
+  );
+  var panelStyle = {
+    transition: dragging || s.reducedMotion ? "none" : "height var(--jv-base) var(--jv-ease)",
+  };
+  if (dragging) panelStyle.height = dragHeight + "px";
+
+  var tasks = visibleTasks(s.tasks, s.dismissedTasks);
+
   return h(
     "div",
     { className: "absolute inset-0 flex flex-col justify-end bg-[rgba(4,7,9,.6)] z-30" },
@@ -153,14 +295,22 @@ function Sheet(props) {
     h(
       "div",
       {
+        ref: panelRef,
         role: "dialog",
         "aria-label": title,
-        className:
-          "flex-none max-h-[72%] flex flex-col rounded-t-[18px] border-t border-[rgba(120,190,200,.16)] bg-surface shadow-e2 jv-rise",
+        className: panelClassName,
+        style: panelStyle,
       },
       h(
         "div",
-        { className: "flex-none flex flex-col items-center pt-[9px] pb-1" },
+        {
+          className: "flex-none flex flex-col items-center pt-[9px] pb-1 cursor-grab active:cursor-grabbing touch-none",
+          onPointerDown: onDragPointerDown,
+          onPointerMove: onDragPointerMove,
+          onPointerUp: endDrag,
+          onPointerCancel: endDrag,
+          "aria-hidden": "true",
+        },
         h("div", { className: "w-[38px] h-1 rounded-[2px] bg-[rgba(120,190,200,.24)]" })
       ),
       h(
@@ -183,9 +333,9 @@ function Sheet(props) {
         "div",
         { className: "flex-1 min-h-0 overflow-y-auto px-[14px] pb-[calc(16px+env(safe-area-inset-bottom))] flex flex-col gap-[9px]" },
         s.sheet === "tasks"
-          ? sortTasks(s.tasks).length === 0
+          ? tasks.length === 0
             ? h("div", { className: "text-[13px] text-faint px-1 py-2" }, "No tasks yet.")
-            : sortTasks(s.tasks).map(function (t) {
+            : tasks.map(function (t) {
                 return h(TaskCardMobile, { key: t.id, task: t, act: act });
               })
           : null,
@@ -212,6 +362,7 @@ export function MobileShell(props) {
   var setDraft = pair[1];
   var speaking = s.fsmState === "speaking" && s.connection === "open";
   var ram = s.health && s.health.ram && typeof s.health.ram.free_gb === "number" ? s.health.ram.free_gb.toFixed(1) + " GB" : "";
+  var fabClearance = useHostFabClearance(hooks);
 
   function send() {
     var text = draft.trim();
@@ -221,14 +372,20 @@ export function MobileShell(props) {
   }
 
   var sheetTabs = [
-    ["tasks", "Tasks", countActionableTasks(s.tasks)],
+    ["tasks", "Tasks", countActionableTasks(s.tasks, s.dismissedTasks)],
     ["memory", "Memory", (s.memoryHits || []).length],
     ["activity", "Activity", s.timeline.length],
   ];
 
   return h(
     "div",
-    { className: "absolute inset-0 flex flex-col" },
+    // --jv-fs-top-clear is set by app.js only while CSS pseudo-fullscreen is
+    // active, to keep our own header (incl. the fullscreen toggle itself)
+    // out from under the host's fixed top chrome — see app.js for why a
+    // padding on the root itself can't do this (position:absolute inset-0's
+    // containing block is the root's padding box, unaffected by its own
+    // padding value).
+    { className: "absolute inset-0 flex flex-col", style: { paddingTop: "var(--jv-fs-top-clear, 0px)" } },
     h(
       "div",
       { className: "flex-none flex items-center gap-[9px] px-4 pt-[14px] pb-[10px]" },
@@ -236,7 +393,7 @@ export function MobileShell(props) {
       h("div", { className: "text-[11px] tracking-[.3em] font-semibold text-text" }, "JARVIS"),
       h("div", { className: "flex-1" }),
       ram ? h("div", { className: "text-[10px] font-mono text-micro" }, ram) : null,
-      h(FullscreenButton, { active: s.fullscreen, onClick: act.toggleFullscreen, mobile: true }),
+      h(FullscreenButton, { active: s.fullscreen || s.pseudoFullscreen, pseudo: s.pseudoFullscreen, onClick: act.toggleFullscreen, mobile: true }),
       h(ConnDot, { conn: s.connection })
     ),
     h(
@@ -280,7 +437,12 @@ export function MobileShell(props) {
       ),
       h(
         "div",
-        { className: "mt-[10px] flex items-center gap-[10px]" },
+        {
+          className: "mt-[10px] flex items-center gap-[10px]",
+          // Reserve clearance from the host's floating chat launcher (see
+          // useHostFabClearance above) — 0 (no-op) wherever it isn't present.
+          style: fabClearance ? { paddingRight: fabClearance + "px" } : undefined,
+        },
         h(
           "div",
           {

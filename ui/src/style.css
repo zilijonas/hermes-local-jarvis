@@ -126,6 +126,38 @@ div:has(> #jarvis-voice-root) {
   scrollbar-color: rgba(120, 190, 200, 0.15) transparent;
 }
 
+/* iOS Safari (and other browsers/webviews lacking Element.requestFullscreen
+ * for non-video elements) has no native Fullscreen API path — app.js's
+ * toggleFullscreen() detects that and sets store.pseudoFullscreen instead,
+ * which adds this class so the button always visibly does something (see
+ * ui/README.md §Mic behavior sibling section on fullscreen). !important
+ * beats the JS-computed inline height from app.js's root-height-pinning
+ * effect. */
+#jarvis-voice-root.jv-pseudo-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  top: 0 !important;
+  left: 0 !important;
+  margin: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  z-index: 2147483647;
+}
+
+/* ---------- mobile bottom-sheet drag snap points (components/mobile.js) ---
+ * Settled (non-dragging) heights only — while the user is actively
+ * dragging the handle, mobile.js drives an inline pixel height instead so
+ * the sheet tracks the finger 1:1. calc() (not JS) owns the safe-area math
+ * for the fullscreen-ish "full" snap so a notch/Dynamic Island is honored
+ * exactly, not approximated. */
+.jv-sheet-half {
+  height: 62%;
+}
+.jv-sheet-full {
+  height: calc(100% - max(env(safe-area-inset-top, 0px), 12px) - 12px);
+}
+
 /* ---------- intelligence core canvas ---------- */
 .jv-canvas {
   position: absolute;

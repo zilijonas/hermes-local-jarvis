@@ -66,6 +66,28 @@ function loadLocalFloat(key, fallback) {
     return fallback;
   }
 }
+// Used for dismissedTasks: {taskId: statusAtDismissTime} — a plain array
+// couldn't carry the "what status was it when the user hid it" bit that
+// lets a genuinely new task.update status un-dismiss a card (see the
+// task.update handler below and components/work.js's Dismiss buttons).
+var DISMISSED_TASKS_KEY = "jarvis-voice:dismissedTasks";
+function loadLocalJSON(key, fallback) {
+  try {
+    var v = window.localStorage.getItem(key);
+    if (v === null) return fallback;
+    var parsed = JSON.parse(v);
+    return parsed && typeof parsed === "object" ? parsed : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+function saveLocalJSON(key, v) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(v));
+  } catch (e) {
+    /* localStorage unavailable (private mode etc) — setting just won't persist */
+  }
+}
 
 function isTypingTarget(el) {
   if (!el) return false;
@@ -113,16 +135,45 @@ function backoffForAttempt(attempt) {
 function isFullscreenActive() {
   return !!(document.fullscreenElement || document.webkitFullscreenElement);
 }
-function toggleFullscreen() {
+function supportsElementFullscreen(el) {
+  return !!(el && (el.requestFullscreen || el.webkitRequestFullscreen));
+}
+
+// Some mobile browsers (iOS Safari pre-16.4, and various in-app webviews)
+// never exposed requestFullscreen()/webkitRequestFullscreen() on ordinary
+// elements at all, so the button used to silently no-op there — tapping it
+// did nothing, with no error and no feedback. Feature-detect and, when the
+// real API is missing (or a call to it gets rejected — e.g. a permissions
+// policy denial), fall back to a CSS-only "pseudo-fullscreen" (store flag
+// -> #jarvis-voice-root.jv-pseudo-fullscreen in style.css) that pins the
+// root to the viewport at max z-index, so the button always visibly does
+// something. `store` is optional so this stays callable exactly like
+// before wherever only the native path is relevant.
+function toggleFullscreen(store) {
+  var st = store && store.get();
   if (isFullscreenActive()) {
     if (document.exitFullscreen) document.exitFullscreen();
     else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
     return;
   }
+  if (st && st.pseudoFullscreen) {
+    store.set({ pseudoFullscreen: false });
+    return;
+  }
   var root = document.getElementById("jarvis-voice-root");
   if (!root) return;
-  if (root.requestFullscreen) root.requestFullscreen();
-  else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
+  if (supportsElementFullscreen(root)) {
+    var req = root.requestFullscreen ? root.requestFullscreen() : root.webkitRequestFullscreen();
+    if (req && typeof req.catch === "function") {
+      req.catch(function () {
+        console.info("[jarvis-voice] requestFullscreen() was rejected — falling back to CSS pseudo-fullscreen.");
+        if (store) store.set({ pseudoFullscreen: true });
+      });
+    }
+    return;
+  }
+  console.info("[jarvis-voice] Fullscreen API unavailable on this browser (likely iOS Safari) — using CSS pseudo-fullscreen instead.");
+  if (store) store.set({ pseudoFullscreen: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +205,9 @@ export function App() {
       volume: loadLocalFloat("jarvis-voice:volume", 1),
       timeline: [],
       tasks: {},
+      // client-only Work-tab "Dismiss" — {taskId: statusAtDismissTime}, see
+      // components/work.js and the task.update handler below.
+      dismissedTasks: loadLocalJSON(DISMISSED_TASKS_KEY, {}),
       memoryHits: [],
       health: null,
       latency: {},
@@ -182,6 +236,9 @@ export function App() {
       lastEventTs: 0,
       offlineDismissed: false,
       fullscreen: typeof document !== "undefined" && !!(document.fullscreenElement || document.webkitFullscreenElement),
+      // CSS-only fallback fullscreen for browsers without a working
+      // Fullscreen API on arbitrary elements (see toggleFullscreen above).
+      pseudoFullscreen: false,
       noSpeechHint: null,
     });
   }
@@ -513,7 +570,22 @@ export function App() {
           store.set(function (st) {
             var tasks = Object.assign({}, st.tasks);
             tasks[msg.id] = Object.assign({}, tasks[msg.id] || {}, updated);
-            return { tasks: tasks };
+            // A dismissed task un-hides itself only if it genuinely moved to
+            // a new status since the user hid it (e.g. re-delegated
+            // elsewhere and now running again) — a repeat of the same
+            // status it was dismissed at stays hidden.
+            var dismissedTasks = st.dismissedTasks;
+            if (
+              msg.status &&
+              dismissedTasks &&
+              Object.prototype.hasOwnProperty.call(dismissedTasks, msg.id) &&
+              dismissedTasks[msg.id] !== msg.status
+            ) {
+              dismissedTasks = Object.assign({}, dismissedTasks);
+              delete dismissedTasks[msg.id];
+              saveLocalJSON(DISMISSED_TASKS_KEY, dismissedTasks);
+            }
+            return { tasks: tasks, dismissedTasks: dismissedTasks };
           });
           pushTimeline(
             "task.update",
@@ -644,7 +716,7 @@ export function App() {
       }
       if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && String(e.key).toLowerCase() === "f") {
         e.preventDefault();
-        toggleFullscreen();
+        toggleFullscreen(store);
         return;
       }
       if (!typing && ["1", "2", "3"].indexOf(e.key) >= 0) {
@@ -715,6 +787,52 @@ export function App() {
       document.removeEventListener("webkitfullscreenchange", onFsChange);
     };
   }, []);
+
+  // CSS pseudo-fullscreen (see toggleFullscreen above) pins the root to
+  // position:fixed/inset:0 — which, verified live, can trade one problem
+  // for a worse one: the host dashboard's own fixed top chrome (a <header>
+  // living outside our subtree entirely) no longer sits above us in normal
+  // document flow, and — because our root is nested inside a host ancestor
+  // that establishes its own (lower) stacking context — our max z-index
+  // still can't out-rank that header's, so it paints on top and swallows
+  // clicks meant for our own fullscreen toggle button. Left unfixed, a user
+  // could tap into pseudo-fullscreen and have no way back out via the UI.
+  // Measure any such top-anchored fixed/sticky header outside our root and
+  // publish the clearance as a CSS custom property (inherited regardless of
+  // layout/positioning, unlike a padding on the root itself — the mobile
+  // shell's and desktop grid's own top-level wrappers are `position:
+  // absolute; inset:0`, whose containing block is the root's *padding box*,
+  // so padding on the root wouldn't actually push their content down; both
+  // consume --jv-fs-top-clear as their own paddingTop instead). A no-op
+  // whenever pseudo-fullscreen is off or no such header exists.
+  useEffect(
+    function () {
+      var root = document.getElementById("jarvis-voice-root");
+      if (!root) return;
+      if (!s.pseudoFullscreen) {
+        root.style.setProperty("--jv-fs-top-clear", "0px");
+        return;
+      }
+      function measure() {
+        var maxBottom = 0;
+        document.querySelectorAll("header").forEach(function (el) {
+          if (root.contains(el)) return; // our own chrome, not host chrome
+          var cs = window.getComputedStyle(el);
+          if (cs.position !== "fixed" && cs.position !== "sticky") return;
+          var rect = el.getBoundingClientRect();
+          if (rect.top > 4) return; // not anchored to the viewport top
+          if (rect.bottom > maxBottom) maxBottom = rect.bottom;
+        });
+        root.style.setProperty("--jv-fs-top-clear", (maxBottom > 0 ? maxBottom : 0) + "px");
+      }
+      measure();
+      window.addEventListener("resize", measure);
+      return function () {
+        window.removeEventListener("resize", measure);
+      };
+    },
+    [s.pseudoFullscreen]
+  );
 
   // ---- root width (drives the 1280/860 layout modes, prototype-style) -----
   useEffect(function () {
@@ -848,6 +966,18 @@ export function App() {
             /* task.update events / connection status carry the truth */
           });
       },
+      // Client-side-only "Dismiss" for needs_review/done/failed cards — no
+      // backend delete exists (or is needed): just hide it locally and
+      // persist the hide across reloads (see components/work.js).
+      dismissTask: function (id) {
+        store.set(function (st) {
+          var task = st.tasks[id];
+          var dismissedTasks = Object.assign({}, st.dismissedTasks);
+          dismissedTasks[id] = (task && task.status) || true;
+          saveLocalJSON(DISMISSED_TASKS_KEY, dismissedTasks);
+          return { dismissedTasks: dismissedTasks };
+        });
+      },
       toggleTaskDetail: function (id) {
         var st = store.get();
         var next = st.expandedTask === id ? null : id;
@@ -890,7 +1020,9 @@ export function App() {
           return { reducedMotion: !st.reducedMotion };
         });
       },
-      toggleFullscreen: toggleFullscreen,
+      toggleFullscreen: function () {
+        toggleFullscreen(store);
+      },
     };
   }
   var act = actRef.current;
@@ -900,12 +1032,12 @@ export function App() {
 
   return h(
     "div",
-    { className: "jv-root", id: "jarvis-voice-root" },
+    { className: cls("jv-root", s.pseudoFullscreen ? "jv-pseudo-fullscreen" : ""), id: "jarvis-voice-root" },
     isMobile
       ? h(MobileShell, { store: store, act: act, refs: refs })
       : h(
           "div",
-          { className: "absolute inset-0 flex flex-col" },
+          { className: "absolute inset-0 flex flex-col", style: { paddingTop: "var(--jv-fs-top-clear, 0px)" } },
           h(SystemBar, { s: s, act: act }),
           h(
             "div",
@@ -979,7 +1111,7 @@ function SystemBar(props) {
       }),
       h("div", { className: "text-[11px] text-[#C8DBDE] tracking-[.02em]" }, conn[1])
     ),
-    h(FullscreenButton, { active: s.fullscreen, onClick: act.toggleFullscreen }),
+    h(FullscreenButton, { active: s.fullscreen || s.pseudoFullscreen, pseudo: s.pseudoFullscreen, onClick: act.toggleFullscreen }),
     h(
       "button",
       {
