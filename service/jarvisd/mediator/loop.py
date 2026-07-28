@@ -122,12 +122,13 @@ class Mediator:
         parse_retry_used = False
         self._partial_spoken = ""
 
+        force_schema = None  # set after a bad tool line → grammar-constrain the retry
         for _hop in range(MAX_TOOL_HOPS + 1):
             if cancel.is_set():
                 break
             buf, spoke_len = "", len(spoken)
             for_this_hop = ""
-            async for delta in self._stream(msgs, cancel):
+            async for delta in self._stream(msgs, cancel, fmt=force_schema):
                 if first_token_ms is None:
                     first_token_ms = (time.monotonic() - t0) * 1000
                 buf += delta
@@ -158,9 +159,18 @@ class Mediator:
                     parse_retry_used = True
                     msgs.append({"role": "assistant", "content": stripped})
                     msgs.append({"role": "system", "content":
-                                 "Invalid tool JSON. Reply with exactly one line: "
-                                 '{"tool": "<name>", "args": {...}} using a valid tool name, '
-                                 "or answer in plain speech."})
+                                 "That tool call was malformed. Re-issue it as valid JSON."})
+                    # Grammar-constrain the retry so Ollama can only emit a
+                    # schema-valid tool object (adopted from LiveKit/pipecat's
+                    # constrained-decoding approach; native to Ollama's `format`).
+                    force_schema = {
+                        "type": "object",
+                        "properties": {
+                            "tool": {"type": "string", "enum": sorted(VALID_TOOLS)},
+                            "args": {"type": "object"},
+                        },
+                        "required": ["tool", "args"],
+                    }
                     continue
                 name, args = call
                 self.tool_stats["calls"] += 1
@@ -215,7 +225,7 @@ class Mediator:
                 "tool_calls": tool_calls}
 
     # ------------------------------------------------------------------
-    async def _stream(self, msgs: list[dict], cancel: asyncio.Event):
+    async def _stream(self, msgs: list[dict], cancel: asyncio.Event, fmt=None):
         # Native /api/chat, NOT /v1: the OpenAI endpoint silently ignores
         # options.num_ctx (verified on this box 2026-07), /api/chat honors it.
         payload = {"model": self.model, "messages": msgs, "stream": True,
@@ -223,6 +233,8 @@ class Mediator:
                    "options": {"num_ctx": self.num_ctx,
                                "temperature": self.temperature,
                                "num_predict": 320}}
+        if fmt is not None:
+            payload["format"] = fmt  # grammar-constrained JSON (tool-retry only)
         async with self._client.stream("POST", f"{self.url}/api/chat",
                                        json=payload) as r:
             r.raise_for_status()

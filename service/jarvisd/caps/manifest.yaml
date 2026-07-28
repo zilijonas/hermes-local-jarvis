@@ -41,17 +41,6 @@
   name: combined file + terminal task
   toolsets: [file, terminal]
   keywords: [script, install, move files, backup, archive, organize]
-- id: web.lookup
-  kind: granite
-  name: look something up on the web
-  toolsets: [web]
-  keywords: [search web, look up, google, news, weather, price, wikipedia]
-- id: web.research.small
-  kind: granite
-  name: short web research with notes
-  toolsets: [web, file]
-  keywords: [research, compare, summarize article, find out about]
-
 - id: code.big
   kind: codex
   name: substantial coding or refactoring job
