@@ -11,57 +11,6 @@ import { TaskCardMobile, ActivityRows } from "./work.js";
 import { MemorySheetContent } from "./memory.js";
 import { statusChip, workerTag, countActionableTasks, visibleTasks } from "./util.js";
 
-// The host dashboard renders its own floating "open chat" launcher
-// (`.floating-chat-launcher`) as position:fixed at the bottom-right of the
-// viewport, above our content — chrome we don't own and can't edit. Below
-// 860px that sits directly on top of the thumb composer's mic button (both
-// want the same bottom-right corner), silently swallowing every tap meant
-// for the mic (confirmed live: mic button rect [303,738,64,64] vs launcher
-// rect [314,768,52,52] on a 390x844 viewport — real overlap, not a wiring
-// bug). We can't touch the host's DOM/CSS, so measure the launcher (if
-// present) at runtime and reserve just enough horizontal clearance in our
-// own composer row to stay clear of it — self-heals if the host ever
-// resizes/repositions/removes that button, and is a no-op wherever it
-// doesn't exist (dev harness, future host versions, desktop widths).
-function useHostFabClearance(hooks) {
-  var useState = hooks.useState;
-  var useEffect = hooks.useEffect;
-  var pair = useState(0);
-  var clearance = pair[0];
-  var setClearance = pair[1];
-  useEffect(function () {
-    function measure() {
-      var fab = document.querySelector(".floating-chat-launcher");
-      if (!fab) {
-        setClearance(0);
-        return;
-      }
-      var rect = fab.getBoundingClientRect();
-      var cs = window.getComputedStyle(fab);
-      // Only reserve space for a fixed, bottom-right-anchored control —
-      // never trust the class name alone in case the host repurposes it.
-      if (
-        cs.position !== "fixed" ||
-        rect.width <= 0 ||
-        rect.right < window.innerWidth - 200 ||
-        rect.bottom < window.innerHeight - 200
-      ) {
-        setClearance(0);
-        return;
-      }
-      setClearance(Math.max(0, window.innerWidth - rect.left) + 10);
-    }
-    measure();
-    window.addEventListener("resize", measure);
-    var t = setTimeout(measure, 400); // host chrome can mount after we do
-    return function () {
-      window.removeEventListener("resize", measure);
-      clearTimeout(t);
-    };
-  }, []);
-  return clearance;
-}
-
 function ConnDot(props) {
   var conn = props.conn;
   var color = conn === "open" ? "var(--jv-accent)" : conn === "closed" ? "var(--jv-danger)" : "var(--jv-warn)";
@@ -362,7 +311,6 @@ export function MobileShell(props) {
   var setDraft = pair[1];
   var speaking = s.fsmState === "speaking" && s.connection === "open";
   var ram = s.health && s.health.ram && typeof s.health.ram.free_gb === "number" ? s.health.ram.free_gb.toFixed(1) + " GB" : "";
-  var fabClearance = useHostFabClearance(hooks);
 
   function send() {
     var text = draft.trim();
@@ -437,12 +385,7 @@ export function MobileShell(props) {
       ),
       h(
         "div",
-        {
-          className: "mt-[10px] flex items-center gap-[10px]",
-          // Reserve clearance from the host's floating chat launcher (see
-          // useHostFabClearance above) — 0 (no-op) wherever it isn't present.
-          style: fabClearance ? { paddingRight: fabClearance + "px" } : undefined,
-        },
+        { className: "mt-[10px] flex items-center gap-[10px]" },
         h(
           "div",
           {

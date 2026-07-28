@@ -852,27 +852,40 @@ export function App() {
     };
   }, []);
 
-  // ---- height pinning (unchanged) ------------------------------------------
+  // ---- height pinning ------------------------------------------------------
   useEffect(function () {
     // The host SPA mounts us under a `display: contents` parent inside a
-    // content-sized block wrapper, so `height: 100%` resolves to content
-    // height and the page silently clips. Pin the root to the real viewport
-    // remainder (top offset accounts for header/banner, which can change).
+    // content-sized block wrapper that ALSO carries its own bottom padding
+    // (pb-[2rem+safe-area]) on an ancestor we can't neutralise from a direct-
+    // child :has() rule. So `innerHeight - top` alone still leaves the page a
+    // few rem taller than the viewport (the user had to scroll to the bottom).
+    // Pin to the viewport remainder, then shrink by any residual page overflow
+    // so the document itself never scrolls — robust to the banner, safe-area
+    // insets, and whatever host chrome is above/below us.
     var root = document.getElementById("jarvis-voice-root");
     if (!root) return;
+    var syncing = false;
     function sync() {
+      if (syncing) return;
+      syncing = true;
       var top = root.getBoundingClientRect().top;
-      root.style.height = Math.max(320, window.innerHeight - top) + "px";
+      var h = Math.max(320, window.innerHeight - top);
+      root.style.height = h + "px";
+      var overflow = document.documentElement.scrollHeight - window.innerHeight;
+      if (overflow > 1) root.style.height = Math.max(320, h - overflow) + "px";
+      syncing = false;
     }
     sync();
     window.addEventListener("resize", sync);
     var ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(sync) : null;
-    if (ro && root.parentElement) ro.observe(document.body);
-    var t = setTimeout(sync, 500); // banner/theme settle
+    if (ro) ro.observe(document.body);
+    var t = setTimeout(sync, 500);   // banner/theme settle
+    var t2 = setTimeout(sync, 1500); // late host chrome (profile banner) settle
     return function () {
       window.removeEventListener("resize", sync);
       if (ro) ro.disconnect();
       clearTimeout(t);
+      clearTimeout(t2);
     };
   }, []);
 
