@@ -20,7 +20,9 @@ import { Stage, derivedState, FullscreenButton } from "./components/stage.js";
 import { MemoryColumn } from "./components/memory.js";
 import { WorkColumn } from "./components/work.js";
 import { MobileShell } from "./components/mobile.js";
-import { cls, fmtClock, fmtDur, countOpenTasks } from "./components/util.js";
+import { BackendSelector, BACKEND_META, creditsPhase } from "./components/backend.js";
+import { BarGauge } from "./components/gauge.js";
+import { cls, fmtClock, fmtDur, countOpenTasks, isTerminalStatus } from "./components/util.js";
 
 var TIMELINE_MAX = 200;
 var TURNS_MAX = 40;
@@ -41,7 +43,43 @@ var TIMELINE_ICON = {
   error: "✕",
   "turn.text": "✎",
   "stt.ignored": "⊘",
+  backend: "◇",
+  credits: "⟳",
 };
+
+// Notices (components/notices.js) capped like the other rolling lists.
+var NOTICES_MAX = 20;
+// Persisted client-side notice dismissals — {noticeId: dismissedAtMs}. Ids
+// are deterministic ("task:<id>:<status>"), so the same terminal state stays
+// hidden across reloads while a NEW status mints a new id and reappears.
+var DISMISSED_NOTICES_KEY = "jarvis-voice:dismissedNotices";
+var DISMISSED_NOTICES_CAP = 100;
+
+// task terminal status → notice tone/title (spec §06: notices derive from
+// task.update terminal events + error events + tasks needing review)
+var TASK_NOTICE = {
+  done: { tone: "info", title: "Task finished" },
+  failed: { tone: "error", title: "Task failed" },
+  canceled: { tone: "info", title: "Task canceled" },
+  needs_review: { tone: "attention", title: "Needs review" },
+};
+function noticeForTask(task) {
+  var def = TASK_NOTICE[task.status];
+  if (!def) return null;
+  return {
+    id: "task:" + task.id + ":" + task.status,
+    tone: def.tone,
+    title: def.title + " · " + (task.title || task.goal || task.id),
+    body:
+      task.result_summary ||
+      task.progress_note ||
+      (task.status === "needs_review" ? "Waiting for your review — approve to re-delegate, or decline." : ""),
+    ts: fmtClock(Date.now()),
+    taskId: task.id,
+    // needs_review rows are approval rows: Approve re-delegates, Decline hides
+    approve: task.status === "needs_review",
+  };
+}
 
 function loadLocalBool(key, fallback) {
   try {
@@ -213,6 +251,15 @@ export function App() {
       latency: {},
       micError: null,
       micHint: null,
+      // worker backend + subscription credits (spec §06/§07) — read on mount
+      // and manual refresh only, never polled (§08)
+      worker_backend: null, // active backend id from GET/POST /backends
+      backends: null, // full GET /backends payload {active, available, backends}
+      credits: null, // full GET /credits payload
+      creditsPhase: "idle", // 'idle' | 'refreshing' | 'ok' | 'stale' | 'error'
+      // notification rows (components/notices.js) + persisted dismissals
+      notices: [],
+      dismissedNotices: loadLocalJSON(DISMISSED_NOTICES_KEY, {}),
       // redesign keys
       tab: "work", // 'work' | 'activity' | 'system' | 'memory'
       sheet: null, // mobile bottom sheet: null | 'tasks' | 'memory' | 'activity'
@@ -315,6 +362,73 @@ export function App() {
     });
   }
 
+  // Add/refresh a notification row (deduped by id; skipped when the user has
+  // already dismissed that exact id — see DISMISSED_NOTICES_KEY).
+  function pushNotice(notice) {
+    if (!notice) return;
+    store.set(function (st) {
+      if (st.dismissedNotices && Object.prototype.hasOwnProperty.call(st.dismissedNotices, notice.id)) return {};
+      var rest = (st.notices || []).filter(function (n) {
+        return n.id !== notice.id;
+      });
+      return { notices: [notice].concat(rest).slice(0, NOTICES_MAX) };
+    });
+  }
+
+  function dismissNotice(id) {
+    store.set(function (st) {
+      var dismissed = Object.assign({}, st.dismissedNotices);
+      dismissed[id] = Date.now();
+      // prune the oldest persisted dismissals past the cap
+      var ids = Object.keys(dismissed);
+      if (ids.length > DISMISSED_NOTICES_CAP) {
+        ids
+          .sort(function (a, b) {
+            return dismissed[a] - dismissed[b];
+          })
+          .slice(0, ids.length - DISMISSED_NOTICES_CAP)
+          .forEach(function (k) {
+            delete dismissed[k];
+          });
+      }
+      saveLocalJSON(DISMISSED_NOTICES_KEY, dismissed);
+      return {
+        dismissedNotices: dismissed,
+        notices: (st.notices || []).filter(function (n) {
+          return n.id !== id;
+        }),
+      };
+    });
+  }
+
+  // ---- worker backend + credits (mount + reconnect + manual refresh ONLY;
+  // no polling per spec §08) --------------------------------------------------
+  function loadBackends() {
+    fetchJSON("/backends")
+      .then(function (data) {
+        store.set({ backends: data, worker_backend: (data && data.active) || store.get().worker_backend });
+      })
+      .catch(function () {
+        /* selector renders from static metadata until this succeeds */
+      });
+  }
+  function loadCredits(refresh) {
+    if (refresh) {
+      if (store.get().creditsPhase === "refreshing") return;
+      store.set({ creditsPhase: "refreshing" });
+    }
+    fetchJSON("/credits" + (refresh ? "?refresh=true" : ""))
+      .then(function (data) {
+        store.set({ credits: data, creditsPhase: data && data.stale ? "stale" : "ok" });
+      })
+      .catch(function () {
+        store.set(function (st) {
+          // keep showing the last payload (marked stale) rather than wiping it
+          return { creditsPhase: st.credits ? "stale" : "error" };
+        });
+      });
+  }
+
   // move the streamed mediator reply into the conversation log once the turn
   // resolves (done / idle / interrupted)
   function commitReply(reason) {
@@ -386,6 +500,12 @@ export function App() {
       .then(function (data) {
         var map = tasksFromResponse(data);
         store.set({ tasks: map });
+        // (for now) any task needing review surfaces as an approval notice,
+        // including on reload — terminal task.update events handle the rest
+        // live (spec §06).
+        Object.values(map).forEach(function (t) {
+          if (t.status === "needs_review") pushNotice(noticeForTask(t));
+        });
         if (announce) {
           var open = countOpenTasks(map);
           pushTurn("system", "Session resumed · " + open + " open task" + (open === 1 ? "" : "s") + " replayed from jarvis.db");
@@ -401,6 +521,8 @@ export function App() {
       .catch(function () {
         /* noop */
       });
+    loadBackends();
+    loadCredits(false); // cached server-side; manual ⟳ passes refresh=true
   }
 
   // ---- mount once: ws, audio, mic, keyboard, timers -----------------------
@@ -593,6 +715,11 @@ export function App() {
             detailString({ progress_note: msg.progress_note, result_summary: msg.result_summary }),
             msg.status === "failed" ? "red" : msg.status === "needs_review" ? "amber" : "cyan"
           );
+          // terminal states surface as notification rows (spec §06); merged
+          // task fields so title/result_summary survive partial updates
+          if (isTerminalStatus(msg.status)) {
+            pushNotice(noticeForTask(Object.assign({}, store.get().tasks[msg.id] || {}, updated)));
+          }
           break;
         }
         case "memory.hits": {
@@ -623,6 +750,15 @@ export function App() {
           pushTurn("system", msg.message || "Turn failed — no reply.", [], { tone: "red" });
           turnMetaRef.current = [];
           store.set({ mediatorText: "", speakingText: "" });
+          // error events also land as a dismissable notification row
+          pushNotice({
+            id: "error:" + Date.now(),
+            tone: "error",
+            title: "Pipeline error",
+            body: msg.message || "Turn failed — see the activity stream.",
+            ts: fmtClock(Date.now()),
+            approve: false,
+          });
           break;
         case "pong":
           break;
@@ -1025,6 +1161,48 @@ export function App() {
             });
         }
       },
+      // POST /backends {backend} — optimistic UI, reverted on failure. The
+      // server persists the choice; the response's `backend` is authoritative.
+      selectBackend: function (name) {
+        var prev = store.get().worker_backend;
+        if (prev === name) return;
+        store.set({ worker_backend: name });
+        var meta = BACKEND_META[name] || { name: name, sub: "" };
+        pushTimeline("backend", "Worker backend set to " + meta.name + (meta.sub ? " · " + meta.sub : ""), null, name === "granite" ? "cyan" : "amber");
+        authedFetch("/backends", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ backend: name }),
+        })
+          .then(function (res) {
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            return res.json();
+          })
+          .then(function (data) {
+            if (data && data.backend) store.set({ worker_backend: data.backend });
+          })
+          .catch(function () {
+            store.set({ worker_backend: prev });
+            pushTimeline("error", "Couldn't set worker backend to " + name, null, "red");
+          });
+      },
+      // manual ⟳ only — /credits is never polled (spec §08)
+      refreshCredits: function () {
+        pushTimeline("credits", "Checked subscription credits", "manual refresh · not polled", "dim");
+        loadCredits(true);
+      },
+      dismissNotice: dismissNotice,
+      // Approve on a needs_review approval row re-delegates the task (same
+      // backend path as the card's Re-delegate button); Decline just hides.
+      resolveNotice: function (id, approved) {
+        var notice = (store.get().notices || []).find(function (n) {
+          return n.id === id;
+        });
+        if (approved && notice && notice.taskId) {
+          actRef.current.taskControl(notice.taskId, "resume");
+        }
+        dismissNotice(id);
+      },
       getSeries: function (stage) {
         return latencyRef.current.series(stage);
       },
@@ -1115,6 +1293,28 @@ function SystemBar(props) {
       stat("RAM FREE", ram, true)
     ),
     h("div", { className: "flex-1" }),
+    // compact credit strip (≥1180): one chip per subscription/limit backend
+    s.w >= 1180 && s.credits && s.credits.backends
+      ? h(
+          "div",
+          { className: "flex items-center gap-[7px] flex-none" },
+          Object.keys(BACKEND_META)
+            .filter(function (id) {
+              var cr = s.credits.backends[id];
+              return cr && cr.tier !== "free";
+            })
+            .map(function (id) {
+              return h(BarGauge, {
+                key: id,
+                name: BACKEND_META[id].name,
+                credit: s.credits.backends[id],
+                phase: creditsPhase(s),
+                active: s.worker_backend === id,
+              });
+            })
+        )
+      : null,
+    h(BackendSelector, { s: s, act: act }),
     h(
       "div",
       { className: "flex items-center gap-[7px] px-[10px] py-[5px] rounded-full border border-[rgba(120,190,200,.14)]" },

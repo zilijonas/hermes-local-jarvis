@@ -7,6 +7,12 @@
 // 20-30 re-renders/sec of the whole panel tree for data only the canvas
 // needs. Only the lower-frequency application state that panels/transcript
 // text actually render from lives here.
+//
+// Redesign spec §07 keys (initialised in app.js createStore): worker_backend,
+// backends (GET /backends payload), credits (GET /credits payload),
+// creditsPhase ('idle'|'refreshing'|'ok'|'stale'|'error'), notices[] and the
+// persisted dismissedNotices map — all low-frequency (mount + manual refresh
+// + task/error events only, no polling).
 import { getHooks } from "./sdk.js";
 
 export function createStore(initial) {

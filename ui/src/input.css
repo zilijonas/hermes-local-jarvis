@@ -39,6 +39,11 @@
   --color-warn: var(--jv-warn);
   --color-danger: var(--jv-danger);
   --color-ok: var(--jv-ok);
+  --color-gauge-full: var(--jv-gauge-full);
+  --color-gauge-mid: var(--jv-gauge-mid);
+  --color-gauge-low: var(--jv-gauge-low);
+  --color-gauge-track: var(--jv-gauge-track);
+  --color-gauge-idle: var(--jv-gauge-idle);
 
   /* radius */
   --radius-*: initial;

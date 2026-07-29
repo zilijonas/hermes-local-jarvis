@@ -1,5 +1,30 @@
 # Jarvis Voice — Final Delivery Report (2026-07-27, fixes 2026-07-28, redesign 2026-07-28)
 
+## Worker-backend selector + credit gauges (2026-07-29)
+Complex tasks + tool calls are now routed to a user-selectable engine:
+- **4 backends** in the worker manager: `granite` (on-device local profile, free,
+  keys stripped), `cloud` (Hermes `default` profile, `--ignore-rules`), `codex`
+  (codex-task.sh), `claude` (headless `claude -p --dangerously-skip-permissions`,
+  full blast radius per user). Selection via `GET/POST /backends` (+availability),
+  persisted to `jarvisd.toml [worker].backend`, live-switchable (verified).
+- **`/credits`** reuses the maintained hermes-plugin-credits reader via the hermes
+  venv (no duplicated provider logic); per-backend `{remaining_pct, remaining_label,
+  reset_epoch, available, phase}`; 10-min cache + manual `?refresh=true` — never polls,
+  never burns credits. Live: claude weekly/session utilisation, codex plan, openrouter
+  limit, granite free.
+- **UI** (from the updated design): system-bar selector → popover (mobile: sheet) with
+  fuel gauges (green→amber→red by remaining, needle+label, ok/refreshing/stale/
+  unavailable phases); bar-gauge strip ≥1180px; Tasks/Work notifications with an
+  attention dot + Approve/Decline/dismiss; ALL terminal states dismissable incl.
+  canceled (fix: dismiss now derives from terminal-ness, not per-surface enumeration);
+  mobile intelligence-core reframed. Verified live (selector, gauges, codex switch,
+  refresh, canceled dismiss, notices+dot, no overflow, mobile mic) at 1440 + 390.
+- **Live intermediate results**: worker stdout streams as throttled progress notes
+  (all 4 backends) instead of a black box; follow-ups queue and never kill a running
+  job (serial turn queue + independent workers). Approve on a needs_review notice
+  re-delegates the same goal on the current backend (`control redelegate`, and
+  resume-on-terminal maps to it).
+
 ## Field-bug round 5 (2026-07-28) — concurrency, mobile, RAM
 - **Loud fan / RAM (#7)**: granite's 64k-context KV cache (11 GB) co-resident with
   gemma drove swap to 40/40 GB and active paging. `OLLAMA_MAX_LOADED_MODELS=1` +

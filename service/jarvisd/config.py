@@ -34,6 +34,7 @@ DEFAULTS: dict[str, Any] = {
         "models": "~/ai/models",
     },
     "budgets": {"context_card_tokens": 600, "mediator_history_turns": 12},
+    "worker": {"backend": "granite"},
 }
 
 

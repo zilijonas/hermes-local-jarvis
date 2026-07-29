@@ -115,7 +115,41 @@ scoped under `#jarvis-voice-root` — never `:root`.
   DETAIL toggle, system tab (health chips from `/health`, per-stage latency
   sparklines from a client-side rolling buffer of `latency` events, model
   residency + unified-memory bar, barge-in/error session counters).
-- **`components/mobile.js`** — the <860px shell + bottom sheets.
+- **`components/backend.js`** — worker-backend selector (spec §06). Desktop:
+  system-bar button (dot · BACKEND · name · tier · ▾) → ~430px popover with
+  one row per backend (availability dot from `GET /backends.available`, tier
+  badge, mono caption + live `/credits` note, fuel gauges right); mobile:
+  header chip → dedicated "WORKER BACKEND" bottom sheet (44px rows).
+  Selecting POSTs `/backends {backend}` (optimistic, reverted on failure —
+  the response's `backend` is authoritative). ⟳ REFRESH calls
+  `GET /credits?refresh=true`; header shows last-checked age. `/backends` +
+  `/credits` load on mount/reconnect ONLY — never polled (§08).
+- **`components/gauge.js`** — credit fuel gauges. `FuelGauge`: static-SVG
+  180° arc + needle, colour interpolated low→mid→full by `remaining_pct`
+  (numeric mirrors of the `--jv-gauge-*` tokens), `value_label` + relative
+  reset (from `reset_epoch`) beneath; phases ok / refreshing (grey,
+  "checking…") / stale (60% opacity, "stale · refresh") / unavailable (empty
+  track + word, no needle — never colour-alone, §09). `BarGauge`: compact
+  system-bar chip (≥1180px root width) per non-free backend. Claude renders
+  two gauges (weekly + session); granite renders its note ("on-device ·
+  free"), no needle; `remaining_pct: null` → note/tier only, no needle.
+- **`components/notices.js`** — notification rows inside the Work tab
+  (desktop) and Tasks sheet (mobile), never floating over the core. Tone →
+  border+icon: attention (amber ⚠) / error (red ✕) / info (▣); approval rows
+  (needs_review) get Approve (re-delegates via task control) / Decline;
+  every row a dismiss ×. Derived in app.js from task.update terminal events
+  (done/failed/needs_review/canceled), server `error` events, and any task
+  in needs_review on resync. Dismiss is CLIENT-SIDE
+  (`jarvis-voice:dismissedNotices` in localStorage; ids are
+  `task:<id>:<status>`, so the same state stays hidden across reloads while
+  a new status reappears). `noticeSummary` drives the amber/red dot on the
+  Work / Tasks tab labels (red if any error, amber if any attention).
+- **`components/mobile.js`** — the <860px shell + bottom sheets (tasks with
+  notices, memory, activity, worker backend). The core canvas is sized like
+  the prototype (`flex:0 1 214px`, min 118px) with the state caption in flow
+  BELOW it; core.js renders a compact framing (centered, radius capped by
+  both axes) when the canvas is under 300px tall, so the core sits balanced
+  above the conversation instead of clipping.
 - **`components/util.js`** — shared helpers (`cls`, duration/clock/ts
   parsing, chip/button class recipes, task sorting/counting, sparkline
   points).
@@ -156,7 +190,11 @@ reducedMotion, volume, timeline, tasks, memoryHits, health, latency,
 micError, micHint`) plus the redesign keys `tab · sheet · expandedTask ·
 verbose` and supporting state (`w, turns, speakingText, toolChip, turnId,
 turnLatency, taskDetail, memQuery, memResults, bargeIns, errCount, tick,
-retryAttempt, retryAt, lastEventTs, offlineDismissed`).
+retryAttempt, retryAt, lastEventTs, offlineDismissed`), plus the spec-§07
+keys `worker_backend · backends · credits · creditsPhase · notices` (and the
+persisted `dismissedNotices` map). The mobile `sheet` key gained a
+`'backend'` value. Credits/backends are fetched on mount and WS reconnect
+only, plus the manual ⟳ refresh — never polled.
 
 ## Keyboard & accessibility
 
@@ -195,6 +233,16 @@ local `updated_ts` stamping, `mode.set` not persisted). New ones:
   (nothing invented).
 - **turn id** comes from the `turn_id` field any event may carry; "TURN —"
   until the first one arrives.
+- **`GET /backends`** → `{active, available:{granite,cloud,codex,claude},
+  backends:[…]}`; **`POST /backends {backend}`** → `{ok, backend}` (persists
+  server-side). Row dots reflect `available`; gauge availability comes from
+  `/credits` per-backend `available` (cloud can be reachable yet "not
+  linked").
+- **`GET /credits`** (`?refresh=true` from the ⟳ button only) →
+  `{backends:{name:{available,tier,phase,note,gauges:[{label,remaining_pct,
+  value_label,reset_epoch}]}}, checked_epoch, age_seconds, stale, error}`.
+  `stale:true` renders gauges at 60% opacity with "stale · refresh"; a
+  failed fetch keeps the last payload and marks it stale rather than wiping.
 
 ## Layout & host integration
 
@@ -222,10 +270,14 @@ consumes the same rms via `onMicLevel`.
 
 - **Full-app mode** (default): mounts the real bundle's App with React 18
   UMD from `node_modules`, a fake WebSocket jarvisd feed and stubbed
-  `/api/plugins/jarvis-voice/*` endpoints. Pills for all 15 states,
-  ▶ RUN TURN scripted pipeline pass, `memory.hits` / `task.update`
-  injectors, go-offline toggle (drives real reconnect + offline sheet), and
-  width presets **1440 / 1024 / 390** for the responsive check.
+  `/api/plugins/jarvis-voice/*` endpoints (incl. `GET/POST /backends` and
+  `GET /credits` with the live shapes — claude weekly+session gauges, cloud
+  unlinked; `?credits=stale` / `?credits=unlinked` force those states).
+  Pills for all 15 states, ▶ RUN TURN scripted pipeline pass, `memory.hits`
+  / `task.update` / **task canceled** / **task done** injectors (the
+  terminal ones exercise notices + the Dismiss-on-canceled fix), go-offline
+  toggle (drives real reconnect + offline sheet), and width presets
+  **1440 / 1024 / 390** for the responsive check.
 - **Visualizer-only mode**: `?vis=1` — drives the core directly (state
   pills, mic slider, analyser stub, reduced-motion) with no React.
 - Query params: `?vis=1 · ?state=<name> · ?demo=1 · ?w=390`.
@@ -233,8 +285,8 @@ consumes the same rms via `onMicLevel`.
 ## Build output (last verified)
 
 ```
-index.js           ~75 KB raw / ~20 KB gzip   (was ~581 KB raw with three.js)
-style.css          ~40 KB raw / ~8 KB gzip    (tokens + hand layer + utilities)
+index.js           ~101 KB min / ~31 KB gzip  (was ~581 KB raw with three.js)
+style.css          ~44 KB min / ~9 KB gzip    (tokens + hand layer + utilities)
 mic-worklet.js     ~2.3 KB
 player-worklet.js  ~1.5 KB
 ```

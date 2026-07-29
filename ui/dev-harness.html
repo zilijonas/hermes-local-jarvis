@@ -63,6 +63,8 @@
   <button id="hz-turn">▶ RUN TURN</button>
   <button id="hz-memory">memory.hits</button>
   <button id="hz-task">task.update</button>
+  <button id="hz-cancel">task canceled</button>
+  <button id="hz-done">task done</button>
   <button id="hz-ignored">stt.ignored</button>
   <button id="hz-error">error (turn failed)</button>
   <button id="hz-nospeech">no speech</button>
@@ -127,6 +129,35 @@
       { ts: new Date(now - 1759e3).toISOString(), type: "needs_review", payload: "validation: no final text → needs_review" },
     ],
   };
+  // worker-backend selector + credit gauges (spec §06) — same shapes as the
+  // live GET /backends and GET /credits endpoints. ?credits=stale forces the
+  // stale presentation; ?credits=unlinked marks every backend unavailable.
+  var BACKENDS_STATE = { active: "granite", available: { granite: true, cloud: true, codex: true, claude: true } };
+  function creditsPayload(refresh) {
+    var demo = params.get("credits");
+    var mk = function (b) {
+      return demo === "unlinked" ? Object.assign({}, b, { available: false, phase: "unavailable", gauges: [] }) : b;
+    };
+    return {
+      backends: {
+        granite: mk({ available: true, tier: "free", gauges: [], note: "on-device · free", phase: "ok" }),
+        cloud: { available: false, tier: "limit", gauges: [], note: "not linked", phase: "unavailable" },
+        codex: mk({ available: true, tier: "sub", phase: "ok", note: "PLUS plan · limits not exposed", gauges: [] }),
+        claude: mk({
+          available: true, tier: "sub", phase: "ok", note: "TEAM plan",
+          gauges: [
+            { label: "weekly", remaining_pct: 0.26, value_label: "26% left", reset_epoch: Math.round(Date.now() / 1000) + 4 * 86400 },
+            { label: "session", remaining_pct: 0.47, value_label: "47% left", reset_epoch: Math.round(Date.now() / 1000) + 2.5 * 3600 },
+          ],
+        }),
+      },
+      checked_epoch: Math.round(Date.now() / 1000) - (refresh ? 0 : demo === "stale" ? 7200 : 240),
+      age_seconds: refresh ? 0 : 240,
+      stale: demo === "stale" && !refresh,
+      error: null,
+    };
+  }
+
   var HEALTH = {
     ok: true, version: "harness", uptime_s: 4212,
     components: {
@@ -255,6 +286,15 @@
     }
     if (offline) return Promise.reject(new TypeError("Failed to fetch (harness offline)"));
     if (u.indexOf("/health") >= 0) return json(HEALTH);
+    if (u.indexOf("/backends") >= 0) {
+      if (opts && String(opts.method).toUpperCase() === "POST") {
+        var picked = JSON.parse(opts.body || "{}").backend;
+        if (picked && BACKENDS_STATE.available[picked]) BACKENDS_STATE.active = picked;
+        return json({ ok: true, backend: BACKENDS_STATE.active });
+      }
+      return json({ active: BACKENDS_STATE.active, available: BACKENDS_STATE.available, backends: ["granite", "cloud", "codex", "claude"] });
+    }
+    if (u.indexOf("/credits") >= 0) return json(creditsPayload(u.indexOf("refresh=true") >= 0));
     if (u.indexOf("/memory/search") >= 0) return json({ hits: MEM_FULL, card: "", budget_tokens: 600 });
     if (/\/tasks\/[^/]+\/control$/.test(u)) {
       var idc = u.match(/\/tasks\/([^/]+)\/control$/)[1];
@@ -444,6 +484,17 @@
   document.getElementById("hz-memory").onclick = function () { serverEvent({ t: "memory.hits", items: MEM_HITS }); };
   document.getElementById("hz-task").onclick = function () {
     serverEvent({ t: "task.update", id: "tk_9f31", status: "running", title: TASKS[0].title, kind: "granite", progress_note: "embedding batch " + (8 + Math.floor(Math.random() * 4)) + "/12" });
+  };
+  // terminal task.update injectors — exercise the notices rows + the
+  // Dismiss-on-every-terminal-state fix (canceled included)
+  document.getElementById("hz-cancel").onclick = function () {
+    var t = TASKS[3];
+    t.status = "canceled";
+    serverEvent({ t: "task.update", id: t.id, status: "canceled", title: t.title, kind: t.kind, result_summary: "Canceled by you · SIGTERM sent to process group." });
+  };
+  document.getElementById("hz-done").onclick = function () {
+    var t = TASKS[0];
+    serverEvent({ t: "task.update", id: t.id, status: "done", title: t.title, kind: t.kind, result_summary: "Index refreshed · 12 notes reconciled, validated." });
   };
   // ---- honest-turn-outcome injectors (stt.ignored / error / no-speech / timeout) ----
   document.getElementById("hz-ignored").onclick = function () {

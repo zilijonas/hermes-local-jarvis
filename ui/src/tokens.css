@@ -40,6 +40,15 @@
   --jv-danger: #FF6B6B;
   --jv-ok: #68EAD0;
 
+  /* credit fuel gauges (redesign spec §04) — the arc colour interpolates
+   * low→mid→full by remaining_pct (components/gauge.js mirrors these RGB
+   * values numerically for the interpolation itself) */
+  --jv-gauge-full: #68EAD0;
+  --jv-gauge-mid: #F2B35C;
+  --jv-gauge-low: #FF6B6B;
+  --jv-gauge-track: rgba(120, 190, 200, 0.14);
+  --jv-gauge-idle: rgba(120, 190, 200, 0.28);
+
   /* spacing — 4px base scale */
   --jv-1: 4px;
   --jv-2: 8px;

@@ -25,8 +25,10 @@ import {
   BTN_WARN,
   MICRO_LABEL,
   taskElapsedSec,
+  isTerminalStatus,
 } from "./util.js";
 import { MemoryPanel } from "./memory.js";
+import { NoticeRows, NoticeDot, noticeSummary } from "./notices.js";
 
 // ---------------------------------------------------------------- tasks ----
 
@@ -137,15 +139,12 @@ export function TaskCard(props) {
   if (t.status === "running") actions.push(["Pause", BTN, "pause"]);
   if (t.status === "paused") actions.push(["Resume", BTN_PRIMARY, "resume"]);
   if (t.status === "running" || t.status === "paused" || t.status === "queued") actions.push(["Cancel", BTN_DANGER, "cancel"]);
-  if (t.status === "needs_review") {
-    actions.push(["Re-delegate", BTN_WARN, "resume"]);
-    actions.push(["Dismiss", BTN, "dismiss"]);
-  }
-  // done/failed cards have nothing left to do but be cleared — "dismiss" is
-  // a pseudo-action (act.dismissTask, client-side only) handled separately
-  // from the real backend task-control actions above (see the click handler
-  // below and app.js's dismissedTasks store key).
-  if (t.status === "done" || t.status === "failed") {
+  if (t.status === "needs_review") actions.push(["Re-delegate", BTN_WARN, "resume"]);
+  // EVERY terminal card (done/failed/needs_review/canceled) can be cleared —
+  // "dismiss" is a pseudo-action (act.dismissTask, client-side only) handled
+  // separately from the real backend task-control actions above (see the
+  // click handler below and app.js's dismissedTasks store key).
+  if (isTerminalStatus(t.status)) {
     actions.push(["Dismiss", BTN, "dismiss"]);
   }
 
@@ -236,11 +235,9 @@ export function TaskCardMobile(props) {
   if (t.status === "running") actions.push(["Pause", BTN, "pause"]);
   if (t.status === "paused") actions.push(["Resume", BTN_PRIMARY, "resume"]);
   if (t.status === "running" || t.status === "paused" || t.status === "queued") actions.push(["Cancel", BTN_DANGER, "cancel"]);
-  if (t.status === "needs_review") {
-    actions.push(["Re-delegate", BTN_WARN, "resume"]);
-    actions.push(["Dismiss", BTN, "dismiss"]);
-  }
-  if (t.status === "done" || t.status === "failed") {
+  if (t.status === "needs_review") actions.push(["Re-delegate", BTN_WARN, "resume"]);
+  // every terminal state gets Dismiss (see isTerminalStatus in util.js)
+  if (isTerminalStatus(t.status)) {
     actions.push(["Dismiss", BTN, "dismiss"]);
   }
   return h(
@@ -540,6 +537,7 @@ export function WorkColumn(props) {
   var tab = showLeft && s.tab === "memory" ? "work" : s.tab;
 
   var tasks = visibleTasks(s.tasks, s.dismissedTasks);
+  var notices = noticeSummary(s);
 
   return h(
     "div",
@@ -570,6 +568,8 @@ export function WorkColumn(props) {
               store.set({ tab: key });
             },
           },
+          // amber/red notification dot on the Work tab label (spec §06)
+          key === "work" ? h(NoticeDot, { tone: notices.tone }) : null,
           def[1],
           def[2] ? h("span", { className: cls("text-[10px] font-mono", active ? "text-accent" : "text-micro") }, def[2]) : null
         );
@@ -578,8 +578,9 @@ export function WorkColumn(props) {
     h(
       "div",
       { className: "flex-1 min-h-0 overflow-y-auto px-[14px] pb-[14px] pt-[2px] flex flex-col gap-[9px]" },
+      tab === "work" ? h(NoticeRows, { s: s, act: act }) : null,
       tab === "work"
-        ? tasks.length === 0
+        ? tasks.length === 0 && !notices.count
           ? h("div", { className: "text-[12px] text-faint px-1 py-2" }, "No tasks yet. Delegate something.")
           : tasks.map(function (t) {
               return h(TaskCard, { key: t.id, task: t, s: s, act: act });

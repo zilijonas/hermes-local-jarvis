@@ -62,6 +62,79 @@ input,button,textarea{font:inherit;color:inherit}
         </div>
       </div>
       <div style="flex:1"></div>
+
+      <sc-if value="{{ showBarGauges }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;gap:7px;flex:none">
+          <sc-for list="{{ barGauges }}" as="g" hint-placeholder-count="3">
+            <div style="{{ g.chipStyle }}" title="{{ g.title }}">
+              <div style="font-size:9px;letter-spacing:.14em;color:#8FA3A8">{{ g.name }}</div>
+              <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
+                <div style="width:44px;height:4px;border-radius:2px;background:rgba(120,190,200,.12);overflow:hidden">
+                  <div style="{{ g.fillStyle }}"></div>
+                </div>
+                <div style="{{ g.pctStyle }}">{{ g.pctLabel }}</div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <div style="position:relative;flex:none">
+        <button onClick="{{ toggleEngine }}" aria-label="Choose worker backend" aria-expanded="{{ engineOpen }}" style="{{ engineBtnStyle }}" style-hover="border-color:rgba(79,227,224,.45)">
+          <div style="{{ activeBackend.dotStyle }}"></div>
+          <div style="display:flex;flex-direction:column;align-items:flex-start">
+            <div style="font-size:8px;letter-spacing:.16em;color:#8FA3A8">BACKEND</div>
+            <div style="font-size:11px;font-weight:600;color:#E8F4F6;line-height:1.1">{{ activeBackend.name }}</div>
+          </div>
+          <div style="{{ activeBackend.tierStyle }}">{{ activeBackend.tierLabel }}</div>
+          <div style="font-size:8px;color:#8FA3A8">▾</div>
+        </button>
+
+        <sc-if value="{{ engineOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;top:38px;right:0;z-index:60;width:430px;padding:14px;border-radius:12px;border:1px solid rgba(120,190,200,.18);background:#0B1114;box-shadow:0 26px 64px rgba(0,0,0,.7);display:flex;flex-direction:column;gap:8px;animation:jvRise .2s ease-out">
+            <div style="display:flex;align-items:center;gap:10px;padding-bottom:2px">
+              <div style="font-size:10px;letter-spacing:.18em;color:#9FB6BA;font-weight:600">WORKER BACKEND</div>
+              <div style="flex:1"></div>
+              <div style="font-size:9px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ creditsAgeLabel }}</div>
+              <button onClick="{{ refreshCredits }}" aria-label="Refresh credit balances" style="{{ refreshStyle }}" style-hover="border-color:rgba(79,227,224,.4);color:#E8F4F6">⟳ REFRESH</button>
+            </div>
+            <sc-for list="{{ backends }}" as="b" hint-placeholder-count="4">
+              <button onClick="{{ b.onSelect }}" aria-label="{{ b.aria }}" aria-pressed="{{ b.active }}" style="{{ b.rowStyle }}" style-hover="border-color:rgba(79,227,224,.32)">
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:4px">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <div style="{{ b.dotStyle }}"></div>
+                    <div style="font-size:13px;font-weight:600;color:#E8F4F6">{{ b.name }}</div>
+                    <div style="{{ b.tierStyle }}">{{ b.tierLabel }}</div>
+                  </div>
+                  <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8;text-align:left">{{ b.caption }}</div>
+                </div>
+                <sc-if value="{{ b.free }}" hint-placeholder-val="{{ false }}">
+                  <div style="flex:none;width:82px;display:flex;flex-direction:column;align-items:center;gap:3px">
+                    <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#68EAD0">no spend</div>
+                    <div style="font-size:9px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">runs on-box</div>
+                  </div>
+                </sc-if>
+                <sc-for list="{{ b.gauges }}" as="g" hint-placeholder-count="1">
+                  <div style="{{ g.wrapStyle }}">
+                    <svg viewBox="0 0 72 44" style="width:66px;height:40px;display:block" aria-hidden="true">
+                      <path d="M8 38 A 28 28 0 0 1 64 38" fill="none" stroke="rgba(120,190,200,0.14)" stroke-width="6" stroke-linecap="round"></path>
+                      <path d="M8 38 A 28 28 0 0 1 64 38" fill="none" stroke="{{ g.color }}" stroke-width="6" stroke-linecap="round" stroke-dasharray="{{ g.dash }}"></path>
+                      <line x1="36" y1="38" x2="36" y2="20" stroke="{{ g.color }}" stroke-width="1.4" stroke-linecap="round" transform="{{ g.needle }}"></line>
+                      <circle cx="36" cy="38" r="2.2" fill="{{ g.color }}"></circle>
+                      <text x="7" y="43" fill="#6E858A" font-size="7" font-family="ui-monospace,Menlo,monospace">E</text>
+                      <text x="62" y="43" fill="#6E858A" font-size="7" font-family="ui-monospace,Menlo,monospace">F</text>
+                    </svg>
+                    <div style="{{ g.labelStyle }}">{{ g.label }}</div>
+                    <div style="{{ g.resetStyle }}">{{ g.reset }}</div>
+                  </div>
+                </sc-for>
+              </button>
+            </sc-for>
+            <div style="font-size:10px;line-height:1.5;color:#6E858A;padding-top:2px">Selection applies to delegated tasks and tool calls. Mediator and voice always stay on-box.</div>
+          </div>
+        </sc-if>
+      </div>
+
       <div style="display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:999px;border:1px solid rgba(120,190,200,.14)" style-hover="{{ null }}">
         <div style="{{ connDotStyle }}"></div>
         <div style="font-size:11px;color:#C8DBDE;letter-spacing:.02em">{{ connLabel }}</div>
@@ -230,14 +303,41 @@ input,button,textarea{font:inherit;color:inherit}
       </div>
 
       <div style="min-height:0;display:flex;flex-direction:column;border-left:1px solid rgba(120,190,200,.09);background:linear-gradient(180deg,rgba(10,16,19,.6),rgba(7,10,12,.2))">
-        <div style="flex:none;display:flex;align-items:center;gap:2px;padding:12px 14px 10px">
+        <div style="flex:none;display:flex;align-items:center;gap:2px;padding:12px 12px 10px;min-width:0">
           <sc-for list="{{ tabs }}" as="tb" hint-placeholder-count="3">
-            <button onClick="{{ tb.onClick }}" aria-label="{{ tb.aria }}" style="{{ tb.style }}" style-hover="color:#E8F4F6">{{ tb.label }}<span style="{{ tb.badgeStyle }}">{{ tb.badge }}</span></button>
+            <button onClick="{{ tb.onClick }}" aria-label="{{ tb.aria }}" style="{{ tb.style }}" style-hover="color:#E8F4F6"><span style="{{ tb.dotStyle }}"></span>{{ tb.label }}<span style="{{ tb.badgeStyle }}">{{ tb.badge }}</span></button>
           </sc-for>
         </div>
 
         <div style="flex:1;min-height:0;overflow-y:auto;padding:2px 14px 14px;display:flex;flex-direction:column;gap:9px">
           <sc-if value="{{ tabWork }}" hint-placeholder-val="{{ true }}">
+            <sc-if value="{{ hasNotices }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;gap:8px;padding:0 2px 2px">
+                <div style="{{ attentionDotStyle }}"></div>
+                <div style="font-size:9px;letter-spacing:.16em;color:#8FA3A8">{{ noticeCountLabel }}</div>
+              </div>
+              <sc-for list="{{ notices }}" as="n" hint-placeholder-count="2">
+                <div style="{{ n.rowStyle }}">
+                  <div style="{{ n.iconStyle }}">{{ n.icon }}</div>
+                  <div style="flex:1;min-width:0">
+                    <div style="{{ n.titleStyle }}">{{ n.title }}</div>
+                    <div style="margin-top:4px;font-size:11px;line-height:1.5;color:#9FB6BA;text-wrap:pretty">{{ n.body }}</div>
+                    <sc-if value="{{ n.hasActions }}" hint-placeholder-val="{{ false }}">
+                      <div style="margin-top:9px;display:flex;align-items:center;gap:6px">
+                        <sc-for list="{{ n.actions }}" as="a" hint-placeholder-count="2">
+                          <button onClick="{{ a.onClick }}" aria-label="{{ a.aria }}" style="{{ a.style }}" style-hover="filter:brightness(1.2)">{{ a.label }}</button>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                  </div>
+                  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none">
+                    <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ n.ts }}</div>
+                    <button onClick="{{ n.onDismiss }}" aria-label="{{ n.dismissAria }}" style="{{ n.dismissStyle }}" style-hover="color:#E8F4F6;border-color:rgba(79,227,224,.35)">×</button>
+                  </div>
+                </div>
+              </sc-for>
+              <div style="height:1px;margin:4px 0 2px;background:linear-gradient(90deg,rgba(120,190,200,.16),transparent)"></div>
+            </sc-if>
             <sc-for list="{{ tasks }}" as="k" hint-placeholder-count="3">
               <div style="{{ k.cardStyle }}">
                 <div style="display:flex;align-items:center;gap:8px">
@@ -413,7 +513,7 @@ input,button,textarea{font:inherit;color:inherit}
           <div style="display:flex;align-items:center;gap:8px">
             <div style="font-size:9px;letter-spacing:.14em;color:#6E858A">PROTOTYPE · SIMULATED jarvisd FEED</div>
             <div style="flex:1"></div>
-            <button onClick="{{ runTurn }}" aria-label="Play a full turn" style="height:26px;padding:0 11px;border-radius:5px;border:1px solid rgba(79,227,224,.32);background:rgba(79,227,224,.12);color:#9DF0EC;font-size:10px;letter-spacing:.08em;cursor:pointer" style-hover="background:rgba(79,227,224,.2)">▶ RUN TURN</button>
+            <button onClick="{{ runTurn }}" aria-label="Play a full turn" style="flex:none;height:26px;padding:0 11px;border-radius:5px;border:1px solid rgba(79,227,224,.32);background:rgba(79,227,224,.12);color:#9DF0EC;font-size:10px;letter-spacing:.08em;cursor:pointer;white-space:nowrap" style-hover="background:rgba(79,227,224,.2)">▶ RUN TURN</button>
           </div>
           <div style="margin-top:9px;display:flex;flex-wrap:wrap;gap:5px">
             <sc-for list="{{ statePills }}" as="p" hint-placeholder-count="8">
@@ -453,19 +553,23 @@ input,button,textarea{font:inherit;color:inherit}
         <div style="width:7px;height:7px;border-radius:50%;background:#4FE3E0;box-shadow:0 0 10px 2px rgba(79,227,224,.5)"></div>
         <div style="font-size:11px;letter-spacing:.3em;font-weight:600">JARVIS</div>
         <div style="flex:1"></div>
-        <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ ramLabel }}</div>
+        <button onClick="{{ openBackendSheet }}" aria-label="Worker backend and credits" style="{{ engineMobileBtnStyle }}">
+          <div style="{{ activeBackend.dotStyle }}"></div>
+          <div style="font-size:11px;font-weight:600;color:#E8F4F6">{{ activeBackend.name }}</div>
+          <div style="{{ activeBackend.tierStyle }}">{{ activeBackend.tierLabel }}</div>
+        </button>
         <div style="{{ connDotStyle }}"></div>
       </div>
 
-      <div style="flex:0 1 232px;min-height:120px;position:relative">
+      <div style="flex:0 1 214px;min-height:118px;position:relative">
         <canvas ref="{{ mCanvasRef }}" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;display:block"></canvas>
-        <div style="position:absolute;left:0;right:0;bottom:4px;display:flex;flex-direction:column;align-items:center;gap:5px;pointer-events:none">
-          <div style="display:flex;align-items:center;gap:8px">
-            <div style="{{ stateDotStyle }}"></div>
-            <div style="{{ stateLabelStyle }}">{{ stateLabel }}</div>
-          </div>
-          <div style="font-size:11px;color:#7FA0A5">{{ stateHint }}</div>
+      </div>
+      <div style="flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;padding:2px 16px 8px;pointer-events:none">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="{{ stateDotStyle }}"></div>
+          <div style="{{ stateLabelStyle }}">{{ stateLabel }}</div>
         </div>
+        <div style="font-size:11px;color:#7FA0A5;text-align:center">{{ stateHint }}</div>
       </div>
 
       <sc-if value="{{ hasActiveTask }}" hint-placeholder-val="{{ false }}">
@@ -505,7 +609,7 @@ input,button,textarea{font:inherit;color:inherit}
       <div style="flex:none;padding:8px 12px calc(12px + env(safe-area-inset-bottom));border-top:1px solid rgba(120,190,200,.1);background:rgba(8,12,14,.9)">
         <div style="display:flex;align-items:center;gap:8px">
           <sc-for list="{{ sheetTabs }}" as="sb" hint-placeholder-count="3">
-            <button onClick="{{ sb.onClick }}" aria-label="{{ sb.aria }}" style="{{ sb.style }}">{{ sb.label }}<span style="{{ sb.badgeStyle }}">{{ sb.badge }}</span></button>
+            <button onClick="{{ sb.onClick }}" aria-label="{{ sb.aria }}" style="{{ sb.style }}"><span style="{{ sb.dotStyle }}"></span>{{ sb.label }}<span style="{{ sb.badgeStyle }}">{{ sb.badge }}</span></button>
           </sc-for>
         </div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:10px">
@@ -525,7 +629,7 @@ input,button,textarea{font:inherit;color:inherit}
       <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
         <div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(4,7,9,.6)">
           <div onClick="{{ closeSheet }}" style="flex:1"></div>
-          <div style="flex:none;max-height:72%;display:flex;flex-direction:column;border-radius:18px 18px 0 0;border-top:1px solid rgba(120,190,200,.16);background:#0B1114;box-shadow:0 -20px 60px rgba(0,0,0,.6);animation:jvRise .22s ease-out">
+          <div style="flex:none;max-height:84%;display:flex;flex-direction:column;border-radius:18px 18px 0 0;border-top:1px solid rgba(120,190,200,.16);background:#0B1114;box-shadow:0 -20px 60px rgba(0,0,0,.6);animation:jvRise .22s ease-out">
             <div style="flex:none;display:flex;flex-direction:column;align-items:center;padding:9px 0 4px">
               <div style="width:38px;height:4px;border-radius:2px;background:rgba(120,190,200,.24)"></div>
             </div>
@@ -535,7 +639,70 @@ input,button,textarea{font:inherit;color:inherit}
               <button onClick="{{ closeSheet }}" aria-label="Close panel" style="width:30px;height:30px;border-radius:15px;border:1px solid rgba(120,190,200,.16);background:transparent;color:#9FB6BA;font-size:14px;cursor:pointer">×</button>
             </div>
             <div style="flex:1;min-height:0;overflow-y:auto;padding:0 14px calc(16px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:9px">
+              <sc-if value="{{ sheetIsBackend }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:9px;padding:0 2px 4px">
+                  <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">{{ creditsAgeLabel }}</div>
+                  <div style="flex:1"></div>
+                  <button onClick="{{ refreshCredits }}" aria-label="Refresh credit balances" style="{{ refreshStyleMobile }}">⟳ Refresh</button>
+                </div>
+                <sc-for list="{{ backends }}" as="b" hint-placeholder-count="4">
+                  <button onClick="{{ b.onSelect }}" aria-label="{{ b.aria }}" aria-pressed="{{ b.active }}" style="{{ b.rowStyle }}">
+                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:5px">
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <div style="{{ b.dotStyle }}"></div>
+                        <div style="font-size:15px;font-weight:600;color:#E8F4F6">{{ b.name }}</div>
+                        <div style="{{ b.tierStyle }}">{{ b.tierLabel }}</div>
+                      </div>
+                      <div style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#8FA3A8;text-align:left">{{ b.caption }}</div>
+                    </div>
+                    <sc-if value="{{ b.free }}" hint-placeholder-val="{{ false }}">
+                      <div style="flex:none;width:84px;display:flex;flex-direction:column;align-items:center;gap:3px">
+                        <div style="font-size:12px;font-family:ui-monospace,Menlo,monospace;color:#68EAD0">no spend</div>
+                        <div style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#6E858A">on-box</div>
+                      </div>
+                    </sc-if>
+                    <sc-for list="{{ b.gauges }}" as="g" hint-placeholder-count="1">
+                      <div style="{{ g.wrapStyle }}">
+                        <svg viewBox="0 0 72 44" style="width:64px;height:38px;display:block" aria-hidden="true">
+                          <path d="M8 38 A 28 28 0 0 1 64 38" fill="none" stroke="rgba(120,190,200,0.14)" stroke-width="6" stroke-linecap="round"></path>
+                          <path d="M8 38 A 28 28 0 0 1 64 38" fill="none" stroke="{{ g.color }}" stroke-width="6" stroke-linecap="round" stroke-dasharray="{{ g.dash }}"></path>
+                          <line x1="36" y1="38" x2="36" y2="20" stroke="{{ g.color }}" stroke-width="1.4" stroke-linecap="round" transform="{{ g.needle }}"></line>
+                          <circle cx="36" cy="38" r="2.2" fill="{{ g.color }}"></circle>
+                        </svg>
+                        <div style="{{ g.labelStyle }}">{{ g.label }}</div>
+                        <div style="{{ g.resetStyle }}">{{ g.reset }}</div>
+                      </div>
+                    </sc-for>
+                  </button>
+                </sc-for>
+                <div style="font-size:11px;line-height:1.55;color:#6E858A;padding:2px 2px 0">Applies to delegated tasks and tool calls. Mediator, transcription and speech always stay on-box.</div>
+              </sc-if>
+
               <sc-if value="{{ sheetIsTasks }}" hint-placeholder-val="{{ false }}">
+                <sc-if value="{{ hasNotices }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:center;gap:8px;padding:0 2px 2px">
+                    <div style="{{ attentionDotStyle }}"></div>
+                    <div style="font-size:10px;letter-spacing:.16em;color:#8FA3A8">{{ noticeCountLabel }}</div>
+                  </div>
+                  <sc-for list="{{ notices }}" as="n" hint-placeholder-count="2">
+                    <div style="{{ n.rowStyle }}">
+                      <div style="{{ n.iconStyle }}">{{ n.icon }}</div>
+                      <div style="flex:1;min-width:0">
+                        <div style="{{ n.titleStyle }}">{{ n.title }}</div>
+                        <div style="margin-top:5px;font-size:12px;line-height:1.5;color:#9FB6BA;text-wrap:pretty">{{ n.body }}</div>
+                        <sc-if value="{{ n.hasActions }}" hint-placeholder-val="{{ false }}">
+                          <div style="margin-top:10px;display:flex;align-items:center;gap:7px">
+                            <sc-for list="{{ n.actionsMobile }}" as="a" hint-placeholder-count="2">
+                              <button onClick="{{ a.onClick }}" aria-label="{{ a.aria }}" style="{{ a.style }}">{{ a.label }}</button>
+                            </sc-for>
+                          </div>
+                        </sc-if>
+                      </div>
+                      <button onClick="{{ n.onDismiss }}" aria-label="{{ n.dismissAria }}" style="{{ n.dismissStyleMobile }}">×</button>
+                    </div>
+                  </sc-for>
+                  <div style="height:1px;margin:4px 0;background:linear-gradient(90deg,rgba(120,190,200,.16),transparent)"></div>
+                </sc-if>
                 <sc-for list="{{ tasks }}" as="k" hint-placeholder-count="3">
                   <div style="{{ k.cardStyle }}">
                     <div style="display:flex;align-items:center;gap:8px">
@@ -598,7 +765,7 @@ input,button,textarea{font:inherit;color:inherit}
   </sc-if>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1512,&quot;height&quot;:950},&quot;startState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;idle&quot;,&quot;listening&quot;,&quot;transcribing&quot;,&quot;thinking&quot;,&quot;memory&quot;,&quot;capability&quot;,&quot;tool&quot;,&quot;delegating&quot;,&quot;worker_progress&quot;,&quot;speaking&quot;,&quot;interrupted&quot;,&quot;blocked&quot;,&quot;error&quot;,&quot;done&quot;,&quot;offline&quot;],&quot;default&quot;:&quot;idle&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;motion&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;full&quot;,&quot;reduced&quot;],&quot;default&quot;:&quot;full&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;coreDetail&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;rich&quot;,&quot;calm&quot;],&quot;default&quot;:&quot;rich&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Intelligence core&quot;},&quot;showPrototypeControls&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;}}">
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1512,&quot;height&quot;:950},&quot;startState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;idle&quot;,&quot;listening&quot;,&quot;transcribing&quot;,&quot;thinking&quot;,&quot;memory&quot;,&quot;capability&quot;,&quot;tool&quot;,&quot;delegating&quot;,&quot;worker_progress&quot;,&quot;speaking&quot;,&quot;interrupted&quot;,&quot;blocked&quot;,&quot;error&quot;,&quot;done&quot;,&quot;offline&quot;],&quot;default&quot;:&quot;idle&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;motion&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;full&quot;,&quot;reduced&quot;],&quot;default&quot;:&quot;full&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;},&quot;creditsDemo&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;live&quot;,&quot;stale&quot;,&quot;unlinked&quot;],&quot;default&quot;:&quot;live&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Credits&quot;},&quot;coreDetail&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;rich&quot;,&quot;calm&quot;],&quot;default&quot;:&quot;rich&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Intelligence core&quot;},&quot;showPrototypeControls&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;}}">
 class Component extends DCLogic {
   rootRef = React.createRef();
   canvasRef = React.createRef();
@@ -678,7 +845,25 @@ class Component extends DCLogic {
     ],
     latency: { stt: [340, 402, 366, 388, 352, 371, 380], mediator_first_token: [690, 604, 655, 720, 612, 588, 612], tts_first_chunk: [268, 291, 254, 274, 262, 258, 266], e2e_first_audio: [1480, 1392, 1441, 1560, 1402, 1368, 1420] },
     bargeIns: 3, errCount: 1, workerResident: false, ramFree: 9.4,
+    engine: "granite", engineOpen: false, creditsPhase: "ok", creditsAge: "4 m ago",
+    credits: {
+      cloud: { available: true, remaining_pct: 0.62, remaining_label: "$12.40 / $20", reset_label: "resets Mon", second: null, full_label: "$12.40 left of the $20.00 weekly limit" },
+      codex: { available: true, remaining_pct: 0.24, remaining_label: "24% weekly", reset_label: "3 d 4 h left", second: null, full_label: "24% of weekly Codex credits remaining" },
+      claude: { available: true, remaining_pct: 0.71, remaining_label: "71% weekly", reset_label: "5 d left", full_label: "71% of weekly Claude credits remaining", second: { remaining_pct: 0.38, remaining_label: "$1.82 session", reset_label: "2 h 10 m left" } },
+    },
+    notices: [
+      { id: "nt1", tone: "attention", title: "Approval needed · shell command", body: "Worker wants to run `rm -rf ~/.cache/jarvis/stt` inside tk_9f31. Approve to let it continue, or decline and it reports back.", ts: "09:07:12", approve: true, dismissable: true },
+      { id: "nt2", tone: "error", title: "Worker process lost", body: "tk_8c07 (`sleep 25`) was orphaned by a jarvisd restart and is waiting for review.", ts: "08:33:03", approve: false, dismissable: true },
+      { id: "nt3", tone: "info", title: "Task finished · /tmp/jarvis-itest.txt", body: "tk_7b52 validated and closed. Nothing else needed.", ts: "07:59:02", approve: false, dismissable: true },
+    ],
   };
+
+  BACKENDS = [
+    { id: "granite", name: "Granite", tierLabel: "FREE", tier: "free", sub: "local · free · on-box", caption: "≈2–6 s · 64k ctx · no spend", model: "granite4.1-local-64k" },
+    { id: "cloud", name: "Cloud", tierLabel: "LIMIT", tier: "paid", sub: "cloud · uses limit", caption: "≈1–3 s · $ per call · weekly cap", model: "openrouter · routed" },
+    { id: "codex", name: "Codex", tierLabel: "SUB", tier: "paid", sub: "codex · weekly credits", caption: "≈4–20 s · coding agent · sub credits", model: "codex-task.sh" },
+    { id: "claude", name: "Claude Code", tierLabel: "SUB", tier: "paid", sub: "claude · weekly + session", caption: "≈4–20 s · coding agent · weekly + session", model: "claude -p" },
+  ];
 
   // ---------- lifecycle ----------
   componentDidMount() {
@@ -803,8 +988,10 @@ class Component extends DCLogic {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     ctx.scale(dpr, dpr);
-    const w = W / dpr, h = H / dpr, cx = w / 2, cy = h / 2 - 6;
-    const R = Math.min(w, h) * 0.29;
+    const w = W / dpr, h = H / dpr, cx = w / 2;
+    const compact = h < 300;
+    const cy = compact ? h * 0.5 : h / 2 - 6;
+    const R = compact ? Math.min(w * 0.3, h * 0.4) : Math.min(w, h) * 0.29;
     const p = this._p, reduced = this.state.reduced;
     const col = (a) => "rgba(" + Math.round(p.col[0]) + "," + Math.round(p.col[1]) + "," + Math.round(p.col[2]) + "," + a + ")";
     const amp = this._amp, mic = this._mic;
@@ -862,6 +1049,32 @@ class Component extends DCLogic {
       ctx.fillRect(a[0] - s / 2, a[1] - s / 2, s, s);
     }
 
+    // volumetric shell — three great circles counter-rotating against the lattice
+    if (!reduced) {
+      const yaw2 = -yaw * 0.62, c2 = Math.cos(yaw2), s2 = Math.sin(yaw2);
+      const axes = [[0, 1, 2], [1, 2, 0], [2, 0, 1]];
+      for (let a = 0; a < 3; a++) {
+        const ax = axes[a], shellR = rad * (1.02 + a * 0.008);
+        ctx.beginPath();
+        let started = false;
+        for (let i = 0; i <= 56; i++) {
+          const th = (i / 56) * Math.PI * 2 + a * 0.7;
+          const v = [0, 0, 0];
+          v[ax[0]] = Math.cos(th); v[ax[1]] = Math.sin(th);
+          const x2 = v[0] * c2 + v[2] * s2, z2 = -v[0] * s2 + v[2] * c2;
+          const y2 = v[1] * cp - z2 * sp, z3 = v[1] * sp + z2 * cp;
+          const per = 2.7 / (2.7 - z3);
+          const X = cx + x2 * shellR * per, Y = cy + y2 * shellR * per;
+          if (z3 < -0.55) { started = false; continue; }
+          started ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+          started = true;
+        }
+        ctx.strokeStyle = col(0.05 + p.glow * 0.06);
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+
     // nucleus
     const nr = rad * (0.3 + amp * 0.22 + (p.mode === "pulse" ? 0.12 : 0));
     const ng = ctx.createRadialGradient(cx, cy, 0, cx, cy, nr * 2.4);
@@ -871,6 +1084,10 @@ class Component extends DCLogic {
     ctx.fillStyle = ng; ctx.beginPath(); ctx.arc(cx, cy, nr * 2.4, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = col(0.42 + amp * 0.4); ctx.lineWidth = 1.2;
     ctx.beginPath(); ctx.arc(cx, cy, nr * 0.72, 0, Math.PI * 2); ctx.stroke();
+    const hg = ctx.createRadialGradient(cx - nr * 0.28, cy - nr * 0.34, 0, cx - nr * 0.28, cy - nr * 0.34, nr * 0.8);
+    hg.addColorStop(0, "rgba(255,255,255," + (0.1 + p.glow * 0.12 + amp * 0.18).toFixed(3) + ")");
+    hg.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(cx, cy, nr * 0.72, 0, Math.PI * 2); ctx.fill();
 
     if (reduced) { this._drawStaticRing(ctx, cx, cy, R, col); return; }
     this._drawMode(ctx, p.mode, cx, cy, R, rad, t, col, amp, mic);
@@ -1098,6 +1315,56 @@ class Component extends DCLogic {
     if (kind === "warn") return Object.assign(base, { border: "1px solid rgba(242,179,92,.4)", background: "rgba(242,179,92,.1)", color: "#F2B35C", fontWeight: 600 });
     return base;
   }
+  _mix(a, b, t) { return [0, 1, 2].map((i) => Math.round(a[i] + (b[i] - a[i]) * t)); }
+  _gaugeRGB(pct) {
+    const low = [255, 107, 107], mid = [242, 179, 92], full = [104, 234, 208];
+    const c = pct <= 0.5 ? this._mix(low, mid, Math.max(0, pct) / 0.5) : this._mix(mid, full, Math.min(1, (pct - 0.5) / 0.5));
+    return "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+  }
+  _gauge(pct, label, reset, kind, phase, available) {
+    const ARC = 87.96;
+    const wrap = { display: "flex", flexDirection: "column", alignItems: "center", gap: "3px", flex: "none", width: "96px" };
+    const lab = { fontSize: "9.5px", fontFamily: this.C.mono, lineHeight: 1.35, textAlign: "center" };
+    const res = { fontSize: "9px", fontFamily: this.C.mono, color: "#6E858A", lineHeight: 1.3, textAlign: "center" };
+    if (!available) {
+      return { wrapStyle: Object.assign({}, wrap, { opacity: 0.9 }),
+        color: "rgba(120,190,200,.28)", dash: "0 200", needle: "rotate(-90 36 38)", kind,
+        label: "unavailable", labelStyle: Object.assign({}, lab, { color: "#8FA3A8" }),
+        reset: kind === "session" ? "no session data" : "not linked", resetStyle: res };
+    }
+    const p = Math.max(0, Math.min(1, pct));
+    const col = phase === "refreshing" ? "rgba(120,190,200,.45)" : this._gaugeRGB(p);
+    return {
+      wrapStyle: Object.assign({}, wrap, { opacity: phase === "stale" ? 0.6 : 1, transition: "opacity .22s" }),
+      color: col, dash: (p * ARC).toFixed(1) + " 200", needle: "rotate(" + (-90 + p * 180).toFixed(1) + " 36 38)", kind,
+      label: label, labelStyle: Object.assign({}, lab, { color: phase === "ok" ? col : "#8FA3A8" }),
+      reset: phase === "refreshing" ? "checking…" : phase === "stale" ? "stale · refresh" : reset,
+      resetStyle: res,
+    };
+  }
+  toggleEngine = () => this.setState({ engineOpen: !this.state.engineOpen });
+  pickEngine = (id) => {
+    if (id === this.state.engine) { this.setState({ engineOpen: false }); return; }
+    const b = this.BACKENDS.find((x) => x.id === id);
+    this.setState({ engine: id, engineOpen: false });
+    this._act("◇", "Worker backend set to " + b.name + " · " + b.sub, "worker_backend: " + id + "\nmodel: " + b.model, id === "granite" ? "cyan" : "amber");
+  };
+  refreshCredits = () => {
+    if (this.state.creditsPhase === "refreshing") return;
+    this.setState({ creditsPhase: "refreshing" });
+    this._act("⟳", "Checked subscription credits for 3 backends", "manual refresh · not polled", "dim");
+    this._at(900, () => this.setState({ creditsPhase: "ok", creditsAge: "just now" }));
+  };
+  dismissNotice = (id) => this.setState((s) => ({ notices: s.notices.filter((n) => n.id !== id) }));
+  resolveNotice = (id, ok) => {
+    const n = this.state.notices.find((x) => x.id === id);
+    this.setState((s) => ({ notices: s.notices.filter((x) => x.id !== id) }));
+    if (n) this._act(ok ? "✓" : "⊘", (ok ? "Approved" : "Declined") + " · " + n.title, "approval resolved by user", ok ? "cyan" : "amber");
+  };
+  dismissTask = (id) => {
+    this.setState((s) => ({ tasks: s.tasks.filter((t) => t.id !== id), expandedTask: s.expandedTask === id ? null : s.expandedTask }));
+    this._act("▦", "Dismissed " + id + " from the task surface", "row hidden locally · jarvis.db row untouched", "dim");
+  };
   _fmt(sec) { const s = Math.max(0, Math.round(sec)); if (s < 60) return s + "s"; const m = Math.floor(s / 60); if (m < 60) return m + "m " + (s % 60) + "s"; const h = Math.floor(m / 60); return h + "h " + (m % 60) + "m"; }
   _spark(arr, stroke) {
     const min = Math.min.apply(null, arr), max = Math.max.apply(null, arr), sp = max - min || 1;
@@ -1131,7 +1398,8 @@ class Component extends DCLogic {
       if (t.status === "running") actions.push({ label: "Pause", aria: "Pause task", style: this._btn(), onClick: () => this.control(t.id, "pause") });
       if (t.status === "paused") actions.push({ label: "Resume", aria: "Resume task", style: this._btn("primary"), onClick: () => this.control(t.id, "resume") });
       if (["running", "paused", "queued"].indexOf(t.status) >= 0) actions.push({ label: "Cancel", aria: "Cancel task", style: this._btn("danger"), onClick: () => this.control(t.id, "cancel") });
-      if (t.status === "needs_review") { actions.push({ label: "Re-delegate", aria: "Re-delegate task", style: this._btn("warn"), onClick: () => this.control(t.id, "resume") }); actions.push({ label: "Dismiss", aria: "Dismiss task", style: this._btn(), onClick: () => this.control(t.id, "cancel") }); }
+      if (t.status === "needs_review") actions.push({ label: "Re-delegate", aria: "Re-delegate task", style: this._btn("warn"), onClick: () => this.control(t.id, "resume") });
+      if (["done", "failed", "needs_review", "canceled"].indexOf(t.status) >= 0) actions.push({ label: "Dismiss", aria: "Dismiss task row", style: this._btn(), onClick: () => this.dismissTask(t.id) });
       const elapsed = t.status === "running" ? this._fmt(t.started + s.tick) : this._fmt(t.started);
       return {
         id: t.id, title: t.title, note: t.note, session: t.session,
@@ -1153,6 +1421,70 @@ class Component extends DCLogic {
       rowStyle: { padding: "7px 8px", borderRadius: "7px", border: "1px solid " + (e.tone === "red" ? "rgba(255,107,107,.2)" : e.tone === "amber" ? "rgba(242,179,92,.18)" : "transparent"), background: e.tone === "red" || e.tone === "amber" ? "rgba(14,16,15,.6)" : "transparent" },
       iconStyle: { fontSize: "10px", paddingTop: "2px", color: e.tone === "red" ? "#FF8F8F" : e.tone === "amber" ? "#F2B35C" : e.tone === "cyan" ? "#4FE3E0" : "#8FA3A8" },
     }));
+
+    const demo = (this.props || {}).creditsDemo || "live";
+    const phase = demo === "stale" ? "stale" : s.creditsPhase;
+    const credit = (id) => {
+      const raw = s.credits[id];
+      if (!raw) return null;
+      return demo === "unlinked" ? Object.assign({}, raw, { available: false }) : raw;
+    };
+    const backends = this.BACKENDS.map((b) => {
+      const cr = credit(b.id);
+      const active = s.engine === b.id;
+      const gauges = [];
+      if (cr) {
+        gauges.push(this._gauge(cr.remaining_pct, cr.remaining_label, cr.reset_label, "weekly", phase, cr.available));
+        if (cr.second) gauges.push(this._gauge(cr.second.remaining_pct, cr.second.remaining_label, cr.second.reset_label, "session", phase, cr.available));
+      }
+      return {
+        name: b.name, caption: b.caption, sub: b.sub, model: b.model, aria: "Use " + b.name + " — " + b.sub,
+        active, onSelect: () => this.pickEngine(b.id),
+        rowStyle: { display: "flex", alignItems: "center", gap: "12px", width: "100%", textAlign: "left", padding: "11px 12px", borderRadius: "9px", cursor: "pointer", border: "1px solid " + (active ? "rgba(79,227,224,.42)" : "rgba(120,190,200,.12)"), background: active ? "rgba(79,227,224,.08)" : "rgba(11,17,20,.7)", transition: "border-color .2s,background .2s" },
+        dotStyle: { width: "7px", height: "7px", borderRadius: "50%", flex: "none", background: active ? "#4FE3E0" : "rgba(120,190,200,.25)", boxShadow: active ? "0 0 10px 2px rgba(79,227,224,.45)" : "none" },
+        tierLabel: b.tierLabel,
+        tierStyle: { fontSize: "9px", letterSpacing: "0.12em", padding: "2px 6px", borderRadius: "3px", flex: "none", border: "1px solid " + (b.tier === "free" ? "rgba(104,234,208,.4)" : "rgba(242,179,92,.38)"), background: b.tier === "free" ? "rgba(104,234,208,.08)" : "rgba(242,179,92,.08)", color: b.tier === "free" ? "#68EAD0" : "#F2B35C" },
+        hasGauge: gauges.length > 0, gauges, free: !cr,
+      };
+    });
+    const activeB = backends.find((b) => b.active) || backends[0];
+
+    const barGauges = this.BACKENDS.filter((b) => s.credits[b.id]).map((b) => {
+      const cr = credit(b.id);
+      const p = cr.available ? Math.max(0, Math.min(1, cr.remaining_pct)) : 0;
+      const col = cr.available ? (phase === "refreshing" ? "rgba(120,190,200,.5)" : this._gaugeRGB(p)) : "rgba(120,190,200,.3)";
+      return {
+        name: b.name.toUpperCase(), title: b.name + " · " + (cr.available ? (cr.full_label || cr.remaining_label) + " · " + cr.reset_label : "unavailable — subscription not linked"),
+        chipStyle: { flex: "none", padding: "4px 9px", borderRadius: "6px", border: "1px solid " + (s.engine === b.id ? "rgba(79,227,224,.3)" : "rgba(120,190,200,.12)"), background: s.engine === b.id ? "rgba(79,227,224,.07)" : "transparent", opacity: phase === "stale" ? 0.6 : 1 },
+        fillStyle: { height: "100%", width: Math.round(p * 100) + "%", borderRadius: "2px", background: col, transition: "width .3s,background .3s" },
+        pctLabel: cr.available ? Math.round(p * 100) + "%" : "—",
+        pctStyle: { fontSize: "10px", fontFamily: C.mono, color: cr.available ? col : "#8FA3A8" },
+      };
+    });
+
+    const notices = s.notices.map((n) => {
+      const tone = n.tone;
+      const col = tone === "error" ? "#FF8F8F" : tone === "attention" ? "#F2B35C" : "#9FB6BA";
+      const acts = [];
+      if (n.approve) {
+        acts.push({ label: "Approve", aria: "Approve request", style: this._btn("primary"), onClick: () => this.resolveNotice(n.id, true) });
+        acts.push({ label: "Decline", aria: "Decline request", style: this._btn("danger"), onClick: () => this.resolveNotice(n.id, false) });
+      }
+      return {
+        title: n.title, body: n.body, ts: n.ts, icon: tone === "error" ? "✕" : tone === "attention" ? "⚠" : "▣",
+        rowStyle: { display: "flex", alignItems: "flex-start", gap: "10px", padding: "11px 12px", borderRadius: "9px", border: "1px solid " + (tone === "error" ? "rgba(255,107,107,.28)" : tone === "attention" ? "rgba(242,179,92,.3)" : "rgba(120,190,200,.12)"), background: tone === "info" ? "rgba(11,17,20,.7)" : "rgba(16,15,12,.75)", animation: "jvRise .24s ease-out" },
+        iconStyle: { fontSize: "11px", color: col, paddingTop: "2px", flex: "none" },
+        titleStyle: { fontSize: "12px", fontWeight: 600, color: tone === "info" ? "#C8DBDE" : col, lineHeight: 1.4 },
+        hasActions: acts.length > 0, actions: acts,
+        actionsMobile: acts.map((a) => ({ label: a.label, aria: a.aria, onClick: a.onClick, style: Object.assign({}, a.style, { height: "36px", padding: "0 14px", fontSize: "13px" }) })),
+        onDismiss: () => (n.approve ? this.resolveNotice(n.id, false) : this.dismissNotice(n.id)),
+        dismissAria: n.approve ? "Decline and dismiss" : "Dismiss notification",
+        dismissStyle: { width: "24px", height: "24px", flex: "none", borderRadius: "6px", border: "1px solid rgba(120,190,200,.16)", background: "transparent", color: "#8FA3A8", fontSize: "13px", lineHeight: "1", cursor: "pointer" },
+        dismissStyleMobile: { width: "44px", height: "44px", flex: "none", borderRadius: "10px", border: "1px solid rgba(120,190,200,.16)", background: "transparent", color: "#9FB6BA", fontSize: "16px", lineHeight: "1", cursor: "pointer" },
+      };
+    });
+    const attentionCount = s.notices.filter((n) => n.tone === "attention" || n.tone === "error").length;
+    const attentionTone = s.notices.some((n) => n.tone === "error") ? "#FF6B6B" : "#F2B35C";
 
     const stages = [["stt", "STT"], ["mediator_first_token", "MEDIATOR"], ["tts_first_chunk", "TTS"], ["e2e_first_audio", "E2E"]];
     const latency = stages.map(([k, label]) => ({ stage: label === "E2E" ? "end-to-end first audio" : label === "STT" ? "stt final" : label === "MEDIATOR" ? "mediator first token" : "tts first chunk", p50: this._pct(s.latency[k], 0.5) + " ms", p95: this._pct(s.latency[k], 0.95) + " ms", points: this._spark(s.latency[k]), stroke: k === "e2e_first_audio" ? "#4FE3E0" : "rgba(120,190,200,0.55)" }));
@@ -1178,15 +1510,17 @@ class Component extends DCLogic {
     const tab = !showLeft || s.tab !== "memory" ? s.tab : "work";
     const tabs = tabDef.map(([k, label, badge]) => ({
       label, aria: label + " panel", onClick: () => this.setState({ tab: k }),
-      style: { display: "inline-flex", alignItems: "center", gap: "7px", height: "30px", padding: "0 12px", borderRadius: "6px", border: "1px solid " + (tab === k ? "rgba(79,227,224,.3)" : "transparent"), background: tab === k ? "rgba(79,227,224,.09)" : "transparent", color: tab === k ? "#E8F4F6" : "#7FA0A5", fontSize: "12px", fontWeight: tab === k ? 600 : 400, cursor: "pointer" },
+      style: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: showLeft ? "7px" : "5px", flex: showLeft ? "none" : "1 1 0", minWidth: "0", height: "30px", padding: showLeft ? "0 12px" : "0 6px", borderRadius: "6px", border: "1px solid " + (tab === k ? "rgba(79,227,224,.3)" : "transparent"), background: tab === k ? "rgba(79,227,224,.09)" : "transparent", color: tab === k ? "#E8F4F6" : "#7FA0A5", fontSize: showLeft ? "12px" : "11.5px", fontWeight: tab === k ? 600 : 400, cursor: "pointer", whiteSpace: "nowrap" },
       badge: badge === "" ? "" : String(badge),
       badgeStyle: { fontSize: "10px", fontFamily: C.mono, color: tab === k ? "#4FE3E0" : "#6E858A" },
+      dotStyle: { width: "6px", height: "6px", borderRadius: "50%", flex: "none", background: k === "work" && attentionCount ? attentionTone : "transparent", boxShadow: k === "work" && attentionCount ? "0 0 8px 1px " + attentionTone + "66" : "none" },
     }));
 
     const sheetTabs = [["tasks", "Tasks", s.tasks.filter((t) => ["running", "queued", "paused", "needs_review"].indexOf(t.status) >= 0).length], ["memory", "Memory", s.memory.length], ["activity", "Activity", s.activity.length]].map(([k, label, badge]) => ({
       label, aria: label + " panel", onClick: () => this.setState({ sheet: k }),
-      style: { flex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "6px", height: "36px", borderRadius: "8px", border: "1px solid rgba(120,190,200,.14)", background: "rgba(11,17,20,.7)", color: "#9FB6BA", fontSize: "12px", cursor: "pointer" },
+      style: { flex: "1", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "6px", height: "44px", borderRadius: "8px", border: "1px solid " + (k === "tasks" && attentionCount ? "rgba(242,179,92,.32)" : "rgba(120,190,200,.14)"), background: "rgba(11,17,20,.7)", color: "#9FB6BA", fontSize: "12px", cursor: "pointer" },
       badge: badge ? String(badge) : "", badgeStyle: { fontSize: "10px", fontFamily: C.mono, color: "#4FE3E0" },
+      dotStyle: { width: "7px", height: "7px", borderRadius: "50%", flex: "none", background: k === "tasks" && attentionCount ? attentionTone : "transparent", boxShadow: k === "tasks" && attentionCount ? "0 0 8px 1px " + attentionTone + "66" : "none" },
     }));
 
     const pillStates = ["idle", "listening", "transcribing", "thinking", "memory", "capability", "tool", "delegating", "worker_progress", "speaking", "interrupted", "blocked", "error", "done", "offline"];
@@ -1278,8 +1612,19 @@ class Component extends DCLogic {
       offline: s.offline, retryAttempt: String(s.retryAttempt), retryIn: s.retryIn, lastEventAgo: s.lastEventAgo, onRetry: this.onRetry, onDismissOffline: this.onDismissOffline,
       runTurn: this.runTurn,
       hasActiveTask: !!activeTask, activeTask: activeTask || {},
-      sheetOpen: !!s.sheet, sheetTitle: s.sheet === "tasks" ? "TASKS & WORKERS" : s.sheet === "memory" ? "MEMORY" : "ACTIVITY",
-      sheetIsTasks: s.sheet === "tasks", sheetIsMemory: s.sheet === "memory", sheetIsActivity: s.sheet === "activity", closeSheet: this.closeSheet,
+      sheetOpen: !!s.sheet, sheetTitle: s.sheet === "tasks" ? "TASKS & NOTIFICATIONS" : s.sheet === "memory" ? "MEMORY" : s.sheet === "backend" ? "WORKER BACKEND" : "ACTIVITY",
+      sheetIsTasks: s.sheet === "tasks", sheetIsMemory: s.sheet === "memory", sheetIsActivity: s.sheet === "activity", sheetIsBackend: s.sheet === "backend", closeSheet: this.closeSheet,
+      openBackendSheet: () => this.setState({ sheet: "backend" }),
+
+      backends, activeBackend: activeB, barGauges, showBarGauges: s.w >= 1180,
+      engineOpen: s.engineOpen, toggleEngine: this.toggleEngine, refreshCredits: this.refreshCredits,
+      engineBtnStyle: { display: "flex", alignItems: "center", gap: "8px", height: "30px", padding: "0 10px", borderRadius: "7px", cursor: "pointer", border: "1px solid " + (s.engineOpen ? "rgba(79,227,224,.45)" : "rgba(120,190,200,.16)"), background: s.engineOpen ? "rgba(79,227,224,.1)" : "rgba(20,32,36,.6)", whiteSpace: "nowrap", flex: "none" },
+      engineMobileBtnStyle: { display: "flex", alignItems: "center", gap: "6px", height: "28px", padding: "0 9px", borderRadius: "7px", cursor: "pointer", border: "1px solid " + (attentionCount ? "rgba(242,179,92,.3)" : "rgba(120,190,200,.16)"), background: "rgba(20,32,36,.6)", flex: "none" },
+      creditsAgeLabel: phase === "refreshing" ? "checking…" : phase === "stale" ? "stale" : "checked " + s.creditsAge,
+      refreshStyle: { display: "flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 9px", borderRadius: "6px", border: "1px solid rgba(120,190,200,.16)", background: "transparent", color: phase === "refreshing" ? "#4FE3E0" : "#9FB6BA", fontSize: "10px", letterSpacing: "0.08em", cursor: "pointer" },
+      refreshStyleMobile: { display: "flex", alignItems: "center", justifyContent: "center", gap: "7px", height: "44px", padding: "0 14px", borderRadius: "9px", border: "1px solid rgba(120,190,200,.16)", background: "transparent", color: phase === "refreshing" ? "#4FE3E0" : "#9FB6BA", fontSize: "12px", cursor: "pointer" },
+      notices, hasNotices: notices.length > 0, noticeCountLabel: notices.length + (notices.length === 1 ? " notification" : " notifications"),
+      attentionDotStyle: { width: "7px", height: "7px", borderRadius: "50%", flex: "none", background: attentionCount ? attentionTone : "transparent" },
     };
   }
 }

@@ -107,6 +107,15 @@ export function sparkPoints(arr) {
     .join(" ");
 }
 
+// Terminal task states — nothing left to control, only review/clear. Drives
+// BOTH the Dismiss button (work.js) and notice derivation (app.js), so a new
+// terminal status only needs adding here, never per-surface (the old
+// per-surface enumeration is exactly how `canceled` lost its Dismiss).
+var TERMINAL_STATUSES = { done: 1, failed: 1, needs_review: 1, canceled: 1 };
+export function isTerminalStatus(status) {
+  return !!TERMINAL_STATUSES[status];
+}
+
 // Status weight for the Work tab ordering: live work first.
 var STATUS_WEIGHT = { running: 0, queued: 1, paused: 2, needs_review: 3, done: 4, failed: 5, canceled: 6 };
 export function sortTasks(taskMap) {

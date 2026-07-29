@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import time
@@ -24,9 +25,20 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+
+def _which(binary: str) -> Optional[str]:
+    return shutil.which(binary) if not os.path.isabs(binary) else (
+        binary if os.path.exists(binary) else None)
+
 HERMES_BIN = os.path.expanduser("~/.local/bin/hermes")
 CODEX_TASK = os.path.expanduser("~/ai/bin/codex-task.sh")
+CLAUDE_BIN = "claude"
 PROFILE = "jarvis-voice"
+
+# Selectable engines for complex tasks + tool calling. The user picks one; every
+# delegate_task runs on it (the mediator/voice loop is unaffected).
+BACKENDS = ("granite", "cloud", "codex", "claude")
+_SECRET_RE = re.compile(r"(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", re.I)
 
 _ERROR_MARKERS = re.compile(
     r"(traceback \(most recent call last\)|\[error\]|fatal:|command not found|"
@@ -37,12 +49,18 @@ _ARTIFACT_RE = re.compile(r"(?:^|[\s`'\"(])(/(?:Users|tmp|private)/[^\s`'\")\]]+
 
 class WorkerManager:
     def __init__(self, db, bus, hermes_bin: str = HERMES_BIN,
-                 codex_bin: str = CODEX_TASK, max_concurrent: int = 2):
+                 codex_bin: str = CODEX_TASK, max_concurrent: int = 2,
+                 backend: str = "granite"):
         self.db = db
         self.bus = bus
         self.hermes_bin = hermes_bin
         self.codex_bin = codex_bin
+        self.backend = backend if backend in BACKENDS else "granite"
         self.sem = asyncio.Semaphore(max_concurrent)
+        try:  # constructed inside the app lifespan → the event loop is running
+            self.loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.loop = None
         self.procs: dict[str, subprocess.Popen] = {}
         self.on_outcome: Optional[Callable[[str, bool], None]] = None  # capability feedback
         self.on_task_event: Optional[Callable[[dict], None]] = None    # pipeline hook
@@ -73,18 +91,43 @@ class WorkerManager:
                 fixed += 1
         return fixed
 
+    # ------------------------------------------------------------- backend
+    def set_backend(self, name: str) -> dict[str, Any]:
+        if name not in BACKENDS:
+            return {"ok": False, "error": f"unknown backend {name}"}
+        self.backend = name
+        return {"ok": True, "backend": name}
+
+    def availability(self) -> dict[str, bool]:
+        """Cheap, no-token reachability per backend."""
+        avail = {"granite": True, "cloud": True, "codex": False, "claude": False}
+        # cloud: the default profile must exist and carry some credential.
+        default_env = os.path.expanduser("~/.hermes/.env")
+        default_auth = os.path.expanduser("~/.hermes/auth.json")
+        avail["cloud"] = os.path.exists(default_auth) or os.path.exists(default_env)
+        # codex: token file present + binary on PATH (mirror codex-task.sh status).
+        avail["codex"] = (os.path.exists(os.path.expanduser("~/.codex/auth.json"))
+                          and _which(self.codex_bin) is not None)
+        # claude: binary + credentials.
+        avail["claude"] = (_which(CLAUDE_BIN) is not None
+                           and os.path.exists(os.path.expanduser("~/.claude/.credentials.json")))
+        return avail
+
     # ------------------------------------------------------------- public
-    async def delegate(self, goal: str, kind: str, context: str = "",
+    async def delegate(self, goal: str, kind: str = "", context: str = "",
                        toolsets: Optional[list[str]] = None,
                        capability_id: str = "") -> dict[str, Any]:
         task_id = uuid.uuid4().hex[:12]
         toolsets = toolsets or ["file", "terminal"]
-        self.db.create_task(task_id, kind=kind, goal=goal, context=context,
+        # The user-selected backend governs every delegated task (the `kind` arg
+        # is kept only for backward compat / explicit overrides in tests).
+        backend = kind if kind in BACKENDS else self.backend
+        self.db.create_task(task_id, kind=backend, goal=goal, context=context,
                             toolsets=",".join(toolsets), status="queued",
-                            metadata={"capability_id": capability_id})
-        self._emit(task_id, note="queued")
+                            metadata={"capability_id": capability_id, "backend": backend})
+        self._emit(task_id, note=f"queued · {backend}")
         asyncio.get_running_loop().create_task(self._run(task_id))
-        return {"task_id": task_id, "status": "started"}
+        return {"task_id": task_id, "status": "started", "backend": backend}
 
     def status(self, task_id: str = "") -> list[dict[str, Any]]:
         if task_id:
@@ -92,11 +135,29 @@ class WorkerManager:
             return [self._brief(t)] if t else []
         return [self._brief(t) for t in self.db.list_tasks(limit=5)]
 
+    _TERMINAL = ("done", "failed", "needs_review", "canceled")
+
     def control(self, task_id: str, action: str) -> dict[str, Any]:
         t = self.db.get_task(task_id)
         if not t:
             return {"ok": False, "error": "unknown task"}
         proc = self.procs.get(task_id)
+        # Approve/re-delegate a reviewed-or-finished task: re-queue the same goal
+        # on the current backend as a fresh task (the notice card's Approve, and
+        # a resume issued against an already-terminal task, both land here).
+        if action == "redelegate" or (action == "resume" and t["status"] in self._TERMINAL):
+            goal = t["goal"]
+            ctx = t.get("context") or ""
+            toolsets = (t.get("toolsets") or "file,terminal").split(",")
+            cap = (t.get("metadata") or {}).get("capability_id", "")
+
+            def _spawn() -> None:
+                self.loop.create_task(self.delegate(goal=goal, context=ctx,
+                                                    toolsets=toolsets, capability_id=cap))
+            if self.loop is None:
+                return {"ok": False, "error": "no event loop for re-delegate"}
+            self.loop.call_soon_threadsafe(_spawn)  # safe from any thread
+            return {"ok": True, "status": "redelegated"}
         if action == "pause" and proc and t["status"] == "running":
             os.killpg(proc.pid, signal.SIGSTOP)
             self.db.update_task(task_id, status="paused")
@@ -116,6 +177,38 @@ class WorkerManager:
             return {"ok": False, "error": f"cannot {action} task in state {t['status']}"}
         self._emit(task_id)
         return {"ok": True, "status": self.db.get_task(task_id)["status"]}
+
+    async def _stream_proc(self, task_id: str, proc: subprocess.Popen) -> str:
+        """Read a worker's merged stdout live, emitting throttled progress notes so
+        the user sees intermediate results — not a black box until it finishes."""
+        loop = asyncio.get_running_loop()
+        lines: list[str] = []
+        state = {"last": 0.0}
+
+        def reader() -> None:
+            for line in iter(proc.stdout.readline, ""):
+                lines.append(line)
+                s = line.strip()
+                now = time.time()
+                if s and now - state["last"] > 2.0:
+                    state["last"] = now
+                    loop.call_soon_threadsafe(self._progress, task_id, s[:140])
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+            proc.wait()
+
+        await loop.run_in_executor(None, reader)
+        return "".join(lines)
+
+    def _progress(self, task_id: str, note: str) -> None:
+        t = self.db.get_task(task_id)
+        if not t or t["status"] not in ("running", "paused"):
+            return
+        self.bus.publish({"t": "task.update", "id": task_id, "status": t["status"],
+                          "title": (t["goal"] or "")[:80], "kind": t["kind"],
+                          "progress_note": note, "result_summary": None})
 
     def _escalate_kill(self, proc: subprocess.Popen) -> None:
         """SIGTERM was sent; guarantee death with SIGKILL if it's ignored."""
@@ -149,10 +242,9 @@ class WorkerManager:
                 if self.db.get_task(task_id)["status"] != "queued":
                     return  # canceled while waiting
             try:
-                if t["kind"] == "codex":
-                    await self._run_codex(t)
-                else:
-                    await self._run_granite(t)
+                runner = {"codex": self._run_codex, "cloud": self._run_cloud,
+                          "claude": self._run_claude}.get(t["kind"], self._run_granite)
+                await runner(t)
             except Exception as e:  # noqa: BLE001 — worker crash must not kill jarvisd
                 self.db.update_task(task_id, status="failed",
                                     result_summary=f"worker crashed: {e}")
@@ -173,15 +265,14 @@ class WorkerManager:
         env["HERMES_HOME"] = os.path.expanduser(f"~/.hermes/profiles/{PROFILE}")
 
         workspace = os.path.expanduser(f"~/.hermes/profiles/{PROFILE}/workspace")
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, start_new_session=True, env=env,
                                 cwd=workspace if os.path.isdir(workspace) else None)
         self.procs[task_id] = proc
         self.db.update_task(task_id, status="running", started=time.time(), pid=proc.pid)
         self._emit(task_id, note="granite worker started")
 
-        loop = asyncio.get_running_loop()
-        out, err = await loop.run_in_executor(None, proc.communicate)
+        out = await self._stream_proc(task_id, proc)
         usage = None
         try:
             usage = json.loads(Path(usage_file).read_text())
@@ -189,10 +280,9 @@ class WorkerManager:
         except Exception:
             pass
 
-        cur = self.db.get_task(task_id)
-        if cur["status"] == "canceled":
+        if self.db.get_task(task_id)["status"] == "canceled":
             return
-        self._finish(task_id, proc.returncode, out.strip(), err.strip(), usage)
+        self._finish(task_id, proc.returncode, out.strip(), "", usage)
 
     async def _run_codex(self, t: dict[str, Any]) -> None:
         task_id = t["id"]
@@ -206,16 +296,58 @@ class WorkerManager:
             return
         prompt = t["goal"] if not t["context"] else f"{t['goal']}\n\nContext:\n{t['context']}"
         proc = subprocess.Popen([self.codex_bin, "run", prompt],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, start_new_session=True)
         self.procs[task_id] = proc
         self.db.update_task(task_id, status="running", started=time.time(), pid=proc.pid)
         self._emit(task_id, note="codex job dispatched")
-        loop = asyncio.get_running_loop()
-        out, err = await loop.run_in_executor(None, proc.communicate)
+        out = await self._stream_proc(task_id, proc)
         if self.db.get_task(task_id)["status"] == "canceled":
             return
-        self._finish(task_id, proc.returncode, out.strip(), err.strip(), None)
+        self._finish(task_id, proc.returncode, out.strip(), "", None)
+
+    async def _run_cloud(self, t: dict[str, Any]) -> None:
+        """Cloud = Hermes `default` profile (its configured cloud model). Uses the
+        default profile's own creds. --ignore-rules skips its delegate-everything
+        skill so it answers directly instead of re-routing to Codex."""
+        task_id = t["id"]
+        prompt = t["goal"] if not t["context"] else f"{t['goal']}\n\nContext:\n{t['context']}"
+        cmd = [self.hermes_bin, "-p", "default", "-z", prompt, "--yolo",
+               "--ignore-rules", "-t", t["toolsets"]]
+        # Full env: the cloud model needs its keys (user allowed blast radius).
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, start_new_session=True)
+        self.procs[task_id] = proc
+        self.db.update_task(task_id, status="running", started=time.time(), pid=proc.pid)
+        self._emit(task_id, note="cloud (default profile) started")
+        out = await self._stream_proc(task_id, proc)
+        if self.db.get_task(task_id)["status"] == "canceled":
+            return
+        self._finish(task_id, proc.returncode, out.strip(), "", None)
+
+    async def _run_claude(self, t: dict[str, Any]) -> None:
+        """Claude Code headless, full permissions (user opted into blast radius).
+        Runs in the profile workspace so relative paths are predictable."""
+        task_id = t["id"]
+        if _which(CLAUDE_BIN) is None:
+            self.db.update_task(task_id, status="failed",
+                                result_summary="Claude Code CLI not on PATH.")
+            self._emit(task_id)
+            return
+        prompt = t["goal"] if not t["context"] else f"{t['goal']}\n\nContext:\n{t['context']}"
+        workspace = os.path.expanduser(f"~/.hermes/profiles/{PROFILE}/workspace")
+        cmd = [CLAUDE_BIN, "-p", prompt, "--dangerously-skip-permissions",
+               "--output-format", "text"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, start_new_session=True,
+                                cwd=workspace if os.path.isdir(workspace) else None)
+        self.procs[task_id] = proc
+        self.db.update_task(task_id, status="running", started=time.time(), pid=proc.pid)
+        self._emit(task_id, note="claude code started")
+        out = await self._stream_proc(task_id, proc)
+        if self.db.get_task(task_id)["status"] == "canceled":
+            return
+        self._finish(task_id, proc.returncode, out.strip(), "", None)
 
     # ------------------------------------------------------------ validation
     def _finish(self, task_id: str, rc: int, out: str, err: str,

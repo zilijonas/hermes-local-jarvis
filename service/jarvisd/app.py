@@ -142,7 +142,8 @@ def create_app(config: JarvisConfig | None = None) -> FastAPI:
         worker_manager_cls = _try_import_attr("jarvisd.workers.manager", "WorkerManager")
         if worker_manager_cls is not None:
             try:
-                app.state.workers = worker_manager_cls(db, bus)
+                backend = (cfg.data.get("worker") or {}).get("backend", "granite")
+                app.state.workers = worker_manager_cls(db, bus, backend=backend)
                 app.state.workers.reconcile_on_boot()
             except Exception:
                 app.state.workers = None
@@ -266,7 +267,42 @@ def create_app(config: JarvisConfig | None = None) -> FastAPI:
     async def post_config(request: Request) -> dict[str, Any]:
         patch = await request.json()
         request.app.state.config.save(patch)
+        # Apply a worker-backend switch live (no restart) if one was included.
+        wb = (patch.get("worker") or {}).get("backend") if isinstance(patch, dict) else None
+        workers = request.app.state.workers
+        if wb and workers is not None:
+            workers.set_backend(wb)
         return request.app.state.config.as_dict()
+
+    @app.get("/backends")
+    def get_backends(request: Request) -> dict[str, Any]:
+        """Selector data: which engines exist, which is active, which are reachable."""
+        workers = request.app.state.workers
+        active = workers.backend if workers is not None else \
+            (request.app.state.config.data.get("worker") or {}).get("backend", "granite")
+        avail = workers.availability() if workers is not None else {}
+        return {"active": active, "available": avail,
+                "backends": ["granite", "cloud", "codex", "claude"]}
+
+    @app.post("/backends")
+    async def set_backend(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        name = (body or {}).get("backend", "")
+        workers = request.app.state.workers
+        if workers is None:
+            raise HTTPException(status_code=501, detail="workers not available")
+        result = workers.set_backend(name)
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error", "bad backend"))
+        request.app.state.config.save({"worker": {"backend": name}})
+        return result
+
+    @app.get("/credits")
+    async def get_credits_route(request: Request, refresh: bool = False) -> dict[str, Any]:
+        fn = _try_import_attr("jarvisd.credits", "get_credits")
+        if fn is None:
+            raise HTTPException(status_code=501, detail="credits module unavailable")
+        return await run_in_threadpool(fn, refresh)
 
     @app.get("/tasks")
     def list_tasks(request: Request, status: str | None = None, limit: int = 50) -> dict[str, Any]:
@@ -283,7 +319,7 @@ def create_app(config: JarvisConfig | None = None) -> FastAPI:
     async def task_control(task_id: str, request: Request) -> dict[str, Any]:
         body = await request.json()
         action = body.get("action")
-        if action not in ("pause", "resume", "cancel"):
+        if action not in ("pause", "resume", "cancel", "redelegate"):
             raise HTTPException(status_code=400, detail="action must be one of pause|resume|cancel")
         manager = request.app.state.workers
         if manager is None:

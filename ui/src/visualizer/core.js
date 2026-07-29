@@ -215,8 +215,13 @@ export function createCore(canvas) {
     var w = W / dpr;
     var h = H / dpr;
     var cx = w / 2;
-    var cy = h / 2 - 6;
-    var R = Math.min(w, h) * 0.29;
+    // compact framing (prototype `_draw`): short canvases — the mobile
+    // shell's core strip — center the core vertically and cap the radius by
+    // BOTH axes so the lattice sits balanced above the conversation instead
+    // of clipping against the caption block.
+    var compact = h < 300;
+    var cy = compact ? h * 0.5 : h / 2 - 6;
+    var R = compact ? Math.min(w * 0.3, h * 0.4) : Math.min(w, h) * 0.29;
     var cr = Math.round(p.col[0]);
     var cg = Math.round(p.col[1]);
     var cb = Math.round(p.col[2]);
@@ -306,6 +311,48 @@ export function createCore(canvas) {
       var s = 0.7 + pv[3] * 0.5;
       ctx.fillStyle = col(0.14 + Math.max(0, pv[2]) * 0.4);
       ctx.fillRect(pv[0] - s / 2, pv[1] - s / 2, s, s);
+    }
+
+    // volumetric shell (prototype `_draw`): three great circles counter-
+    // rotating against the lattice — same degradation tier as the horizon
+    // grid, skipped entirely under reduced motion.
+    if (!reduced && degrade < 2) {
+      var yaw2 = -yaw * 0.62;
+      var c2 = Math.cos(yaw2);
+      var s2 = Math.sin(yaw2);
+      var SHELL_AXES = [
+        [0, 1, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+      ];
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = col(0.05 + p.glow * 0.06);
+      for (var sa = 0; sa < 3; sa++) {
+        var ax = SHELL_AXES[sa];
+        var shellR = rad * (1.02 + sa * 0.008);
+        ctx.beginPath();
+        var started = false;
+        for (var si = 0; si <= 56; si++) {
+          var th = (si / 56) * Math.PI * 2 + sa * 0.7;
+          var sv = [0, 0, 0];
+          sv[ax[0]] = Math.cos(th);
+          sv[ax[1]] = Math.sin(th);
+          var sx2 = sv[0] * c2 + sv[2] * s2;
+          var sz2 = -sv[0] * s2 + sv[2] * c2;
+          var sy2 = sv[1] * cp - sz2 * sp;
+          var sz3 = sv[1] * sp + sz2 * cp;
+          if (sz3 < -0.55) {
+            started = false;
+            continue;
+          }
+          var sper = 2.7 / (2.7 - sz3);
+          var sX = cx + sx2 * shellR * sper;
+          var sY = cy + sy2 * shellR * sper;
+          started ? ctx.lineTo(sX, sY) : ctx.moveTo(sX, sY);
+          started = true;
+        }
+        ctx.stroke();
+      }
     }
 
     // nucleus (cached sprite bloom + vector ring — no shadowBlur)

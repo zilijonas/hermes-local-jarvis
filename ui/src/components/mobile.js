@@ -9,6 +9,8 @@ import { cls } from "./util.js";
 import { StateCaption, ToolChip, MicButton, MicBanner, FullscreenButton, derivedState } from "./stage.js";
 import { TaskCardMobile, ActivityRows } from "./work.js";
 import { MemorySheetContent } from "./memory.js";
+import { BackendChipMobile, BackendSheetContent } from "./backend.js";
+import { NoticeRows, NoticeDot, noticeSummary } from "./notices.js";
 import { statusChip, workerTag, countActionableTasks, visibleTasks } from "./util.js";
 
 function ConnDot(props) {
@@ -172,7 +174,14 @@ function Sheet(props) {
   );
 
   if (!s.sheet) return null;
-  var title = s.sheet === "tasks" ? "TASKS & WORKERS" : s.sheet === "memory" ? "MEMORY" : "ACTIVITY";
+  var title =
+    s.sheet === "tasks"
+      ? "TASKS & NOTIFICATIONS"
+      : s.sheet === "memory"
+        ? "MEMORY"
+        : s.sheet === "backend"
+          ? "WORKER BACKEND"
+          : "ACTIVITY";
   function close() {
     store.set({ sheet: null });
   }
@@ -281,13 +290,15 @@ function Sheet(props) {
       h(
         "div",
         { className: "flex-1 min-h-0 overflow-y-auto px-[14px] pb-[calc(16px+env(safe-area-inset-bottom))] flex flex-col gap-[9px]" },
+        s.sheet === "tasks" ? h(NoticeRows, { s: s, act: act, mobile: true }) : null,
         s.sheet === "tasks"
-          ? tasks.length === 0
+          ? tasks.length === 0 && !noticeSummary(s).count
             ? h("div", { className: "text-[13px] text-faint px-1 py-2" }, "No tasks yet.")
             : tasks.map(function (t) {
                 return h(TaskCardMobile, { key: t.id, task: t, act: act });
               })
           : null,
+        s.sheet === "backend" ? h(BackendSheetContent, { s: s, act: act }) : null,
         s.sheet === "memory" ? h(MemorySheetContent, { store: store }) : null,
         s.sheet === "activity"
           ? s.timeline.length === 0
@@ -310,7 +321,7 @@ export function MobileShell(props) {
   var draft = pair[0];
   var setDraft = pair[1];
   var speaking = s.fsmState === "speaking" && s.connection === "open";
-  var ram = s.health && s.health.ram && typeof s.health.ram.free_gb === "number" ? s.health.ram.free_gb.toFixed(1) + " GB" : "";
+  var notices = noticeSummary(s);
 
   function send() {
     var text = draft.trim();
@@ -340,20 +351,31 @@ export function MobileShell(props) {
       h("div", { className: "w-[7px] h-[7px] rounded-full bg-accent shadow-bloom" }),
       h("div", { className: "text-[11px] tracking-[.3em] font-semibold text-text" }, "JARVIS"),
       h("div", { className: "flex-1" }),
-      ram ? h("div", { className: "text-[10px] font-mono text-micro" }, ram) : null,
+      h(BackendChipMobile, {
+        s: s,
+        attention: !!notices.tone,
+        onClick: function () {
+          store.set({ sheet: "backend" });
+        },
+      }),
       h(FullscreenButton, { active: s.fullscreen || s.pseudoFullscreen, pseudo: s.pseudoFullscreen, onClick: act.toggleFullscreen, mobile: true }),
       h(ConnDot, { conn: s.connection })
     ),
+    // Core sized like the prototype (flex 0 1 214px, min 118px) with the
+    // state caption in FLOW below it — never overlaid on the lattice — so the
+    // core sits balanced above the conversation instead of being clipped by
+    // its own caption at phone heights. core.js renders a compact framing
+    // (higher center, tighter radius) when the canvas is under 300px tall.
     h(
       "div",
-      { className: "flex-[0_1_232px] min-h-[120px] relative" },
-      h("canvas", { ref: refs.canvasRef, "aria-hidden": "true", className: "jv-canvas" }),
-      h(
-        "div",
-        { className: "absolute left-0 right-0 bottom-1 flex flex-col items-center gap-[5px] pointer-events-none" },
-        h(StateCaption, { s: s }),
-        h(ToolChip, { s: s })
-      )
+      { className: "flex-[0_1_214px] min-h-[118px] relative" },
+      h("canvas", { ref: refs.canvasRef, "aria-hidden": "true", className: "jv-canvas" })
+    ),
+    h(
+      "div",
+      { className: "flex-none flex flex-col items-center gap-1 px-4 pt-[2px] pb-2 pointer-events-none" },
+      h(StateCaption, { s: s, mobile: true }),
+      h(ToolChip, { s: s })
     ),
     h(ActiveTaskChip, { s: s }),
     h(MobileConversation, { s: s, refs: refs }),
@@ -367,6 +389,7 @@ export function MobileShell(props) {
         "div",
         { className: "flex items-center gap-2" },
         sheetTabs.map(function (def) {
+          var isTasks = def[0] === "tasks";
           return h(
             "button",
             {
@@ -375,9 +398,13 @@ export function MobileShell(props) {
                 store.set({ sheet: def[0] });
               },
               "aria-label": def[1] + " panel",
-              className:
-                "flex-1 inline-flex items-center justify-center gap-[6px] h-11 rounded-[8px] border border-[rgba(120,190,200,.14)] bg-[rgba(11,17,20,.7)] text-dim text-[12px] cursor-pointer",
+              className: cls(
+                "flex-1 inline-flex items-center justify-center gap-[6px] h-11 rounded-[8px] border bg-[rgba(11,17,20,.7)] text-dim text-[12px] cursor-pointer",
+                isTasks && notices.tone ? "border-[rgba(242,179,92,.32)]" : "border-[rgba(120,190,200,.14)]"
+              ),
             },
+            // notification dot on the Tasks tab label (spec §06)
+            isTasks ? h(NoticeDot, { tone: notices.tone }) : null,
             def[1],
             def[2] ? h("span", { className: "text-[10px] font-mono text-accent" }, String(def[2])) : null
           );

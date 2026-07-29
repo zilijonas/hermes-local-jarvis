@@ -117,7 +117,7 @@ export function StateCaption(props) {
         meta.label
       )
     ),
-    h("div", { className: "text-[12px] text-[#7FA0A5] tracking-[.02em]" }, hint)
+    h("div", { className: cls("text-[#7FA0A5] tracking-[.02em]", props.mobile ? "text-[11px] text-center" : "text-[12px]") }, hint)
   );
 }
 
