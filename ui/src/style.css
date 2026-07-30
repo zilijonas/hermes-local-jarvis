@@ -195,6 +195,26 @@ div:has(> #jarvis-voice-root) {
     transform: none;
   }
 }
+/* gauge loading sweep: a short arc segment travelling the 180° track.
+ * Pattern length 176 = 2 × the 88-unit arc, so exactly one segment is ever
+ * visible; one full pattern per cycle = one E→F sweep. */
+@keyframes jvGaugeSweep {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -176;
+  }
+}
+@keyframes jvShimmer {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
 
 .jv-blink {
   animation: jvBlink 1.3s ease-in-out infinite;
@@ -206,6 +226,17 @@ div:has(> #jarvis-voice-root) {
  * fraction, so the sweep signals "running", nothing more */
 .jv-indeterminate {
   animation: jvSweep 1.6s var(--jv-ease) infinite;
+}
+/* credit-gauge loading skeleton (components/gauge.js): the arc segment
+ * sweeps the track, the value-line pill shimmers. Fixed footprint — the
+ * loader occupies the exact gauge box so refresh never shifts layout.
+ * Both the OS media query below and the in-app MOTION OFF toggle (which
+ * drops these classes, see gauge.js `reduced`) degrade to a static dim arc. */
+.jv-gauge-sweep {
+  animation: jvGaugeSweep 1.6s linear infinite;
+}
+.jv-shimmer {
+  animation: jvShimmer 1.2s ease-in-out infinite;
 }
 /* live-partial caret */
 .jv-caret {

@@ -27,11 +27,33 @@ _TTL = 600.0  # 10 min; refresh=True bypasses
 _cache: dict[str, Any] = {"at": 0.0, "raw": None}
 
 
+_DEFAULT_ENV = os.path.expanduser("~/.hermes/.env")
+
+
+def _probe_env() -> dict[str, str]:
+    """jarvisd's own env is deliberately key-free (local purity). The credit
+    reader needs the provider keys (OPENROUTER_API_KEY etc.) that live in the
+    default profile's .env — the same ones the dashboard process sees. Load them
+    ONLY for this read-only balance probe; they never touch the local mediator.
+    """
+    env = dict(os.environ)
+    try:
+        for line in open(_DEFAULT_ENV):
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            env.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+    except OSError:
+        pass
+    return env
+
+
 def _probe(force: bool) -> dict[str, Any]:
     try:
         out = subprocess.run(
             [HERMES_VENV_PY, _PROBE, "force" if force else ""],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, text=True, timeout=30, env=_probe_env())
         return json.loads(out.stdout.strip().splitlines()[-1])
     except Exception as e:  # noqa: BLE001
         return {"error": str(e)[:200], "providers": []}
@@ -49,20 +71,24 @@ def _shape(raw: dict[str, Any]) -> dict[str, Any]:
     out["granite"] = {"available": True, "tier": "free", "gauges": [],
                       "note": "on-device · free", "phase": "ok"}
 
-    # cloud — OpenRouter USD limit.
+    # cloud — OpenRouter. The user's key carries a WEEKLY spend limit:
+    # `limit_usd` is the weekly cap and `remaining_usd` is what's left THIS week
+    # (starts at the cap, drains per call, resets weekly). `usage_usd` is
+    # LIFETIME spend — never mix it into the weekly fraction (that was the
+    # "0% left" bug: lifetime $16.57 vs a $4 weekly cap).
     o = prov.get("openrouter")
     if o and o.get("configured") and o.get("ok", True) and o.get("error") is None:
-        limit = o.get("limit")
-        used = o.get("usage_usd") or 0.0
+        limit = o.get("limit_usd")
         rem = o.get("remaining_usd")
-        if limit:
-            pct = max(0.0, min(1.0, (rem if rem is not None else limit - used) / limit))
+        used = o.get("usage_usd") or 0.0
+        if limit and rem is not None:
+            pct = max(0.0, min(1.0, rem / limit))
             out["cloud"] = {"available": True, "tier": "limit", "phase": "ok",
-                            "note": None,
-                            "gauges": [{"label": "credit", "remaining_pct": pct,
-                                        "value_label": f"${(rem if rem is not None else limit - used):.2f} of ${limit:.0f}",
+                            "note": "resets weekly",
+                            "gauges": [{"label": "weekly", "remaining_pct": pct,
+                                        "value_label": f"${rem:.2f} of ${limit:.2f}",
                                         "reset_epoch": None}]}
-        else:  # unlimited / pay-as-you-go — show spend, no needle
+        else:  # no cap configured — pay-as-you-go, show lifetime spend, no needle
             out["cloud"] = {"available": True, "tier": "limit", "phase": "ok",
                             "note": "pay-as-you-go",
                             "gauges": [{"label": "spent", "remaining_pct": None,
@@ -71,18 +97,45 @@ def _shape(raw: dict[str, Any]) -> dict[str, Any]:
         out["cloud"] = {"available": False, "tier": "limit", "gauges": [],
                         "note": "not linked", "phase": "unavailable"}
 
-    # codex — ChatGPT sub; usage not exposed via API, so tier only.
+    # codex — ChatGPT sub. Real API rejects the subscription OAuth token, so
+    # there's no live balance endpoint; when the `codex` CLI itself has run a
+    # turn recently, hermes-plugin-credits surfaces its last-cached weekly
+    # rate-limit snapshot (codex_weekly_* fields, read from local CLI session
+    # logs — see plugin_api.py). Fall back to tier-only when that's absent
+    # (e.g. real API key configured, or no recent CLI cache) or an
+    # OPENAI_API_KEY's per-request rate-limit headers if present.
     c = prov.get("openai")
     if c and c.get("configured") and c.get("ok", True):
-        rr, rl = c.get("requests_remaining"), c.get("requests_limit")
         gauges = []
-        if rr is not None and rl:
-            gauges = [{"label": "requests", "remaining_pct": max(0.0, min(1.0, rr / rl)),
-                       "value_label": f"{rr} of {rl}", "reset_epoch": c.get("requests_reset")}]
+        wu = c.get("codex_weekly_used_percent")
+        if wu is not None:
+            pct = max(0.0, min(1.0, 1.0 - (wu / 100.0)))
+            gauges.append({"label": "weekly", "remaining_pct": pct,
+                           "value_label": f"{round(100 - wu)}% left",
+                           "reset_epoch": c.get("codex_weekly_resets_at")})
+        else:
+            rr, rl = c.get("requests_remaining"), c.get("requests_limit")
+            if rr is not None and rl:
+                gauges = [{"label": "requests", "remaining_pct": max(0.0, min(1.0, rr / rl)),
+                           "value_label": f"{rr} of {rl}", "reset_epoch": c.get("requests_reset")}]
+        note = (c.get("plan") or "").upper() + " plan"
+        if not gauges:
+            note += " · usage limits not exposed"
+        elif c.get("codex_weekly_snapshot_at"):
+            # This % is a passive cache from the last `codex` CLI turn, not a
+            # live read — flag its age so a stale number isn't mistaken for
+            # current usage (e.g. if usage since then happened via the
+            # ChatGPT desktop app instead of the CLI).
+            age_s = max(0.0, time.time() - c["codex_weekly_snapshot_at"])
+            if age_s < 3600:
+                age_str = "just now"
+            elif age_s < 86400:
+                age_str = f"{int(age_s // 3600)}h ago"
+            else:
+                age_str = f"{int(age_s // 86400)}d ago"
+            note += f" · cached, last codex CLI turn {age_str}"
         out["codex"] = {"available": True, "tier": "sub", "phase": "ok",
-                        "note": (c.get("plan") or "").upper() + " plan · limits not exposed"
-                                if not gauges else (c.get("plan") or "").upper() + " plan",
-                        "gauges": gauges}
+                        "note": note, "gauges": gauges}
     else:
         out["codex"] = {"available": False, "tier": "sub", "gauges": [],
                         "note": "not linked", "phase": "unavailable"}

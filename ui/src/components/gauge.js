@@ -54,28 +54,43 @@ export function fmtReset(resetEpoch) {
 }
 
 var REFRESHING_COL = "rgba(120,190,200,.45)";
+var ARC_D = "M8 38 A 28 28 0 0 1 64 38";
 
 function arcSvg(opts) {
-  // opts: { color, pct (0..1 or null), showNeedle, mobile }
+  // opts: { color, pct (0..1 or null), showNeedle, mobile, sweep, reduced }
+  // sweep: loading skeleton — a short segment travelling the track
+  // (jv-gauge-sweep, style.css) instead of a value arc; static dim segment
+  // when reduced motion is on (in-app toggle; the OS media query freezes the
+  // animation itself).
   var pct = typeof opts.pct === "number" ? Math.max(0, Math.min(1, opts.pct)) : null;
   var dash = pct == null ? "0 200" : (pct * ARC_LEN).toFixed(1) + " 200";
   var kids = [
     // track — --jv-gauge-track
     h("path", {
-      d: "M8 38 A 28 28 0 0 1 64 38",
+      d: ARC_D,
       fill: "none",
       style: { stroke: "var(--jv-gauge-track)" },
       strokeWidth: "6",
       strokeLinecap: "round",
     }),
-    h("path", {
-      d: "M8 38 A 28 28 0 0 1 64 38",
-      fill: "none",
-      stroke: opts.color,
-      strokeWidth: "6",
-      strokeLinecap: "round",
-      strokeDasharray: dash,
-    }),
+    opts.sweep
+      ? h("path", {
+          d: ARC_D,
+          fill: "none",
+          stroke: REFRESHING_COL,
+          strokeWidth: "6",
+          strokeLinecap: "round",
+          strokeDasharray: "16 160",
+          className: opts.reduced ? "" : "jv-gauge-sweep",
+        })
+      : h("path", {
+          d: ARC_D,
+          fill: "none",
+          stroke: opts.color,
+          strokeWidth: "6",
+          strokeLinecap: "round",
+          strokeDasharray: dash,
+        }),
   ];
   if (opts.showNeedle && pct != null) {
     kids.push(
@@ -112,9 +127,11 @@ function arcSvg(opts) {
 // One fuel gauge.
 //   props.gauge: { label, remaining_pct, value_label, reset_epoch } from
 //     GET /credits (may be null for the unavailable placeholder)
-//   props.phase: "ok" | "refreshing" | "stale" | "unavailable"
+//   props.phase: "ok" | "refreshing" | "loading" | "stale" | "unavailable"
+//     ("loading" = first fetch before any data; renders like "refreshing")
 //   props.note:  backend note (shown as the reset line when unavailable)
 //   props.mobile: sheet-sized variant (no E/F letters)
+//   props.reduced: in-app reduced-motion toggle — static loader, no sweep
 export function FuelGauge(props) {
   var g = props.gauge || {};
   var phase = props.phase || "ok";
@@ -132,10 +149,40 @@ export function FuelGauge(props) {
     );
   }
 
+  if (phase === "refreshing" || phase === "loading") {
+    // fixed-size skeleton in the exact gauge footprint (arc + value line +
+    // reset line, same classes) so a refresh never shifts layout — the arc
+    // segment sweeps the track, the value pill shimmers (static when
+    // reduced). The reset line keeps the SAME text as the loaded state (so
+    // its wrap count — and the row height — can't change mid-refresh);
+    // "checking…" only appears on true first load, where there's no
+    // baseline to match.
+    var loadReset = fmtReset(g.reset_epoch);
+    var loadLine = (g.label ? g.label + (loadReset ? " · " : "") : "") + (loadReset || "");
+    if (!loadLine && phase === "loading") loadLine = "checking…";
+    return h(
+      "div",
+      {
+        className: wrapBase,
+        "aria-label": (props.name ? props.name + " " : "") + (g.label ? g.label + " credits" : "credits") + " — checking…",
+        "aria-busy": "true",
+      },
+      arcSvg({ sweep: true, reduced: props.reduced, pct: null, mobile: mobile }),
+      h(
+        "div",
+        { className: "text-[9.5px] font-mono leading-[1.35] text-center" },
+        h("span", {
+          className: cls("inline-block w-9 h-[7px] rounded-[3px] bg-[rgba(120,190,200,.22)]", props.reduced ? "" : "jv-shimmer"),
+          "aria-hidden": "true",
+        })
+      ),
+      loadLine ? h("div", { className: "text-[9px] font-mono leading-[1.3] text-center text-micro" }, loadLine) : null
+    );
+  }
+
   var pct = typeof g.remaining_pct === "number" ? g.remaining_pct : null;
-  var refreshing = phase === "refreshing";
-  var color = pct == null ? "var(--jv-gauge-idle)" : refreshing ? REFRESHING_COL : gaugeRGB(pct);
-  var reset = refreshing ? "checking…" : phase === "stale" ? "stale · refresh" : fmtReset(g.reset_epoch);
+  var color = pct == null ? "var(--jv-gauge-idle)" : gaugeRGB(pct);
+  var reset = phase === "stale" ? "stale · refresh" : fmtReset(g.reset_epoch);
   var resetLine = (g.label ? g.label + (reset ? " · " : "") : "") + (reset || "");
   var aria =
     (props.name ? props.name + " " : "") +
@@ -150,7 +197,7 @@ export function FuelGauge(props) {
       style: { transition: "opacity .22s" },
       "aria-label": aria,
     },
-    arcSvg({ color: color, pct: pct, showNeedle: pct != null && !refreshing, mobile: mobile }),
+    arcSvg({ color: color, pct: pct, showNeedle: pct != null, mobile: mobile }),
     h(
       "div",
       {
@@ -198,7 +245,8 @@ export function BarGauge(props) {
         "div",
         { className: "w-11 h-1 rounded-[2px] overflow-hidden", style: { background: "var(--jv-gauge-track)" } },
         h("div", {
-          className: "h-full rounded-[2px]",
+          // shimmer while refreshing — same fixed 44×4px box, no layout change
+          className: cls("h-full rounded-[2px]", phase === "refreshing" && !props.reduced ? "jv-shimmer" : ""),
           style: { width: (pct != null ? Math.round(pct * 100) : 0) + "%", background: color, transition: "width .3s,background .3s" },
         })
       ),

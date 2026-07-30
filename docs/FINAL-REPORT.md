@@ -1,5 +1,26 @@
 # Jarvis Voice — Final Delivery Report (2026-07-27, fixes 2026-07-28, redesign 2026-07-28)
 
+## Gauge data + polish round (2026-07-30)
+- **Codex weekly gauge fixed (both plugins)**: sourced from the codex CLI's own
+  cached rate-limit snapshot in ~/.codex/sessions rollout logs — zero network,
+  zero tokens; staleness-guarded (drops to tier-only once the cached window's
+  reset has passed; note shows cache age). No live endpoint exists that doesn't
+  spend a turn.
+- **OpenRouter semantics fixed (both plugins)**: `limit_usd` is a WEEKLY cap and
+  `remaining_usd` is this week's remainder (starts full, drains per call, resets
+  weekly); `usage_usd` is lifetime spend and is never mixed into the fraction
+  (the old math pinned the needle at 0%). Jarvis also read the wrong key
+  (`limit` vs `limit_usd`) — fixed; jarvisd's probe now loads provider keys from
+  ~/.hermes/.env for the read-only balance check (its own env stays key-free).
+- **Credits dashboard gauges restyled** to the jarvis car speed-gauge look
+  (180° arc + needle, green→amber→red), incl. Anthropic 5h+7d pair. Third-party
+  plugin — edited locally, backed up, not pushed.
+- **Fixed-footprint loaders** during load/refresh in both plugins (sweeping arc
+  + shimmer, reduced-motion aware, zero layout jump).
+- **Work tab de-noised**: done/canceled no longer mint notices (cards suffice);
+  duplicate actionable notices batch into one row with a count, expandable, with
+  Approve all / Dismiss all. 12 flat rows → 5 grouped.
+
 ## Worker-backend selector + credit gauges (2026-07-29)
 Complex tasks + tool calls are now routed to a user-selectable engine:
 - **4 backends** in the worker manager: `granite` (on-device local profile, free,

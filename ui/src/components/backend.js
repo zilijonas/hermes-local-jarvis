@@ -122,13 +122,19 @@ function BackendRow(props) {
   var gauges = (cr && cr.gauges) || [];
   var creditUnavailable = !!cr && cr.available === false;
 
+  var reduced = !!s.reducedMotion;
+
   var right;
   if (creditUnavailable) {
     right = [h(FuelGauge, { key: "una", phase: "unavailable", note: note, name: meta.name, mobile: mobile })];
   } else if (gauges.length) {
     right = gauges.map(function (g, i) {
-      return h(FuelGauge, { key: g.label || "g" + i, gauge: g, phase: phase === "idle" ? "ok" : phase, name: meta.name, mobile: mobile });
+      return h(FuelGauge, { key: g.label || "g" + i, gauge: g, phase: phase === "idle" ? "ok" : phase, name: meta.name, mobile: mobile, reduced: reduced });
     });
+  } else if (!cr && (phase === "idle" || phase === "refreshing")) {
+    // no /credits payload yet (first load, or manual refresh before any data)
+    // — same-sized gauge-slot loader instead of guessing a note block
+    right = [h(FuelGauge, { key: "load", phase: "loading", name: meta.name, mobile: mobile, reduced: reduced })];
   } else {
     right = [h(NoteBlock, { key: "note", note: note, tier: tier, mobile: mobile })];
   }

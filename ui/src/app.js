@@ -56,11 +56,12 @@ var DISMISSED_NOTICES_KEY = "jarvis-voice:dismissedNotices";
 var DISMISSED_NOTICES_CAP = 100;
 
 // task terminal status → notice tone/title (spec §06: notices derive from
-// task.update terminal events + error events + tasks needing review)
+// task.update terminal events + error events + tasks needing review).
+// Only ACTIONABLE states become standing notice rows: needs_review (approval)
+// and failed (error). Plain done/canceled are already visible as task cards —
+// mirroring them as notifications too just made the Work tab a wall of noise.
 var TASK_NOTICE = {
-  done: { tone: "info", title: "Task finished" },
   failed: { tone: "error", title: "Task failed" },
-  canceled: { tone: "info", title: "Task canceled" },
   needs_review: { tone: "attention", title: "Needs review" },
 };
 function noticeForTask(task) {
@@ -715,8 +716,10 @@ export function App() {
             detailString({ progress_note: msg.progress_note, result_summary: msg.result_summary }),
             msg.status === "failed" ? "red" : msg.status === "needs_review" ? "amber" : "cyan"
           );
-          // terminal states surface as notification rows (spec §06); merged
-          // task fields so title/result_summary survive partial updates
+          // actionable terminal states surface as notification rows (spec
+          // §06) — noticeForTask returns null for done/canceled, which stay
+          // task-cards only; merged task fields so title/result_summary
+          // survive partial updates
           if (isTerminalStatus(msg.status)) {
             pushNotice(noticeForTask(Object.assign({}, store.get().tasks[msg.id] || {}, updated)));
           }
@@ -1310,6 +1313,7 @@ function SystemBar(props) {
                 credit: s.credits.backends[id],
                 phase: creditsPhase(s),
                 active: s.worker_backend === id,
+                reduced: s.reducedMotion,
               });
             })
         )
