@@ -98,43 +98,44 @@ def _shape(raw: dict[str, Any]) -> dict[str, Any]:
                         "note": "not linked", "phase": "unavailable"}
 
     # codex — ChatGPT sub. Real API rejects the subscription OAuth token, so
-    # there's no live balance endpoint; when the `codex` CLI itself has run a
-    # turn recently, hermes-plugin-credits surfaces its last-cached weekly
-    # rate-limit snapshot (codex_weekly_* fields, read from local CLI session
-    # logs — see plugin_api.py). Fall back to tier-only when that's absent
-    # (e.g. real API key configured, or no recent CLI cache) or an
-    # OPENAI_API_KEY's per-request rate-limit headers if present.
+    # weekly usage instead comes from a LIVE read hermes-plugin-credits takes
+    # via the `codex` CLI's own app-server RPC (account/rateLimits/read — a
+    # zero-quota metadata call, see plugin_api._codex_live_rate_limits).
+    # codex_weekly_state distinguishes three cases: "ok" (gauge below),
+    # "off" (plan has no weekly cap -> explicit 0, never a fake full gauge)
+    # and "unavailable" (live read failed -> render like "not linked").
     c = prov.get("openai")
     if c and c.get("configured") and c.get("ok", True):
+        state = c.get("codex_weekly_state")
         gauges = []
-        wu = c.get("codex_weekly_used_percent")
-        if wu is not None:
+        available = True
+        phase = "ok"
+        note = (c.get("plan") or "").upper() + " plan"
+        if state == "ok" and c.get("codex_weekly_used_percent") is not None:
+            wu = c["codex_weekly_used_percent"]
             pct = max(0.0, min(1.0, 1.0 - (wu / 100.0)))
-            gauges.append({"label": "weekly", "remaining_pct": pct,
-                           "value_label": f"{round(100 - wu)}% left",
-                           "reset_epoch": c.get("codex_weekly_resets_at")})
+            gauges = [{"label": "weekly", "remaining_pct": pct,
+                       "value_label": f"{round(100 - wu)}% left",
+                       "reset_epoch": c.get("codex_weekly_resets_at")}]
+        elif state == "off":
+            gauges = [{"label": "weekly", "remaining_pct": 0.0,
+                       "value_label": "0%", "reset_epoch": None}]
+            note += " · no weekly limit"
+        elif state == "unavailable":
+            available = False
+            phase = "unavailable"
+            note = "live weekly usage unavailable"
         else:
+            # No ChatGPT-subscription weekly state (e.g. a real
+            # OPENAI_API_KEY is configured instead) — fall back to
+            # per-request rate-limit headers if present.
             rr, rl = c.get("requests_remaining"), c.get("requests_limit")
             if rr is not None and rl:
                 gauges = [{"label": "requests", "remaining_pct": max(0.0, min(1.0, rr / rl)),
                            "value_label": f"{rr} of {rl}", "reset_epoch": c.get("requests_reset")}]
-        note = (c.get("plan") or "").upper() + " plan"
-        if not gauges:
-            note += " · usage limits not exposed"
-        elif c.get("codex_weekly_snapshot_at"):
-            # This % is a passive cache from the last `codex` CLI turn, not a
-            # live read — flag its age so a stale number isn't mistaken for
-            # current usage (e.g. if usage since then happened via the
-            # ChatGPT desktop app instead of the CLI).
-            age_s = max(0.0, time.time() - c["codex_weekly_snapshot_at"])
-            if age_s < 3600:
-                age_str = "just now"
-            elif age_s < 86400:
-                age_str = f"{int(age_s // 3600)}h ago"
-            else:
-                age_str = f"{int(age_s // 86400)}d ago"
-            note += f" · cached, last codex CLI turn {age_str}"
-        out["codex"] = {"available": True, "tier": "sub", "phase": "ok",
+            if not gauges:
+                note += " · usage limits not exposed"
+        out["codex"] = {"available": available, "tier": "sub", "phase": phase,
                         "note": note, "gauges": gauges}
     else:
         out["codex"] = {"available": False, "tier": "sub", "gauges": [],

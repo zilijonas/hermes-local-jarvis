@@ -108,8 +108,12 @@ function arcSvg(opts) {
     kids.push(h("circle", { cx: "36", cy: "38", r: "2.2", fill: opts.color }));
   }
   if (!opts.mobile) {
-    kids.push(h("text", { x: "7", y: "43", fill: "var(--jv-text-micro)", fontSize: "7", fontFamily: "var(--jv-mono)" }, "E"));
-    kids.push(h("text", { x: "62", y: "43", fill: "var(--jv-text-micro)", fontSize: "7", fontFamily: "var(--jv-mono)" }, "F"));
+    // y=52 (was 43): ~8 rendered px lower at this gauge's 40/44 ≈ 0.91x
+    // (downscaled) rendering, so E/F sit fully below the arc ends instead
+    // of clipping into the track. overflow-visible lets this render past
+    // the nominal 44-tall viewBox.
+    kids.push(h("text", { x: "7", y: "52", fill: "var(--jv-text-micro)", fontSize: "7", fontFamily: "var(--jv-mono)" }, "E"));
+    kids.push(h("text", { x: "62", y: "52", fill: "var(--jv-text-micro)", fontSize: "7", fontFamily: "var(--jv-mono)" }, "F"));
   }
   return h.apply(
     null,
@@ -117,7 +121,7 @@ function arcSvg(opts) {
       "svg",
       {
         viewBox: "0 0 72 44",
-        className: cls("block", opts.mobile ? "w-16 h-[38px]" : "w-[66px] h-10"),
+        className: cls("block overflow-visible", opts.mobile ? "w-16 h-[38px]" : "w-[66px] h-10"),
         "aria-hidden": "true",
       },
     ].concat(kids)
