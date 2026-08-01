@@ -53,6 +53,9 @@ export function createJarvisSocket(handlers) {
     ws = socket;
 
     socket.onopen = function () {
+      // A reconnect timer armed before this socket opened must not fire
+      // later and replace this healthy connection with a fresh one.
+      clearTimeout(reconnectTimer);
       backoffMs = INITIAL_BACKOFF_MS;
       expectingBinary = false;
       onStatus("open");
@@ -77,7 +80,12 @@ export function createJarvisSocket(handlers) {
       // else: stray binary frame with no preceding chunk_hdr — ignored.
     };
     socket.onclose = function () {
-      if (ws === socket) ws = null;
+      // Only the ACTIVE socket's close drives a reconnect. A discarded
+      // socket (forceReconnect closed it and already opened a new one)
+      // closing late must not flip status back to "reconnecting" or arm
+      // a timer that would tear down the replacement connection.
+      if (ws !== socket) return;
+      ws = null;
       scheduleReconnect();
     };
     socket.onerror = function () {

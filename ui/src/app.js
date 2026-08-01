@@ -30,6 +30,10 @@ var HEALTH_POLL_MS = 15000;
 var MOBILE_BREAK = 860;
 var LEFT_COL_BREAK = 1280;
 
+// Monotonic token for selectBackend's optimistic POST — only the latest
+// in-flight request may write its response into the store.
+var selectBackendSeq = 0;
+
 var TIMELINE_ICON = {
   state: "◆",
   "stt.final": "▤",
@@ -1166,9 +1170,14 @@ export function App() {
       },
       // POST /backends {backend} — optimistic UI, reverted on failure. The
       // server persists the choice; the response's `backend` is authoritative.
+      // Sequenced: two quick picks race their POSTs, and whichever response
+      // lands LAST would otherwise overwrite the user's actual final choice —
+      // only the latest request may touch the store (same token pattern as
+      // enrichMemoryHits / memory runSearch).
       selectBackend: function (name) {
         var prev = store.get().worker_backend;
         if (prev === name) return;
+        var seq = (selectBackendSeq += 1);
         store.set({ worker_backend: name });
         var meta = BACKEND_META[name] || { name: name, sub: "" };
         pushTimeline("backend", "Worker backend set to " + meta.name + (meta.sub ? " · " + meta.sub : ""), null, name === "granite" ? "cyan" : "amber");
@@ -1182,9 +1191,11 @@ export function App() {
             return res.json();
           })
           .then(function (data) {
+            if (seq !== selectBackendSeq) return;
             if (data && data.backend) store.set({ worker_backend: data.backend });
           })
           .catch(function () {
+            if (seq !== selectBackendSeq) return;
             store.set({ worker_backend: prev });
             pushTimeline("error", "Couldn't set worker backend to " + name, null, "red");
           });
