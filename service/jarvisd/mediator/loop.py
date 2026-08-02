@@ -33,13 +33,20 @@ VALID_TOOLS = {"memory_recall", "capability_search", "quick_action",
 class Mediator:
     def __init__(self, ollama_url: str, model: str, num_ctx: int = 8192,
                  keep_alive: str = "30m", history_turns: int = 12,
-                 temperature: float = 0.4):
+                 temperature: float = 0.4, think: bool = False):
         self.url = ollama_url.rstrip("/")
         self.model = model
         self.num_ctx = num_ctx
         self.keep_alive = keep_alive
         self.history_turns = history_turns
         self.temperature = temperature
+        # Gemma E4B (gemma4:e4b-it-qat) spends its num_predict budget on hidden
+        # reasoning when thinking is left on — verified on this box 2026-08-02:
+        # warm /api/chat round-trip 3.2s->1.5s, and under a tight num_predict the
+        # reply comes back EMPTY (message.thinking holds all the tokens, content
+        # is ""). think=False is the mediator default: it needs sub-1.5s voice
+        # turns, never hidden chain-of-thought. Override only for debugging.
+        self.think = think
         self.history: list[dict[str, str]] = []
         self.pending_events: list[str] = []   # task updates to surface next turn
         self.tool_stats = {"calls": 0, "parse_errors": 0}
@@ -78,6 +85,7 @@ class Mediator:
         try:
             await self._client.post(f"{self.url}/api/chat", json={
                 "model": self.model, "stream": False, "keep_alive": self.keep_alive,
+                "think": self.think,
                 "options": {"num_ctx": self.num_ctx, "num_predict": 1},
                 "messages": [{"role": "user", "content": "hi"}]})
             return True
@@ -228,8 +236,12 @@ class Mediator:
     async def _stream(self, msgs: list[dict], cancel: asyncio.Event, fmt=None):
         # Native /api/chat, NOT /v1: the OpenAI endpoint silently ignores
         # options.num_ctx (verified on this box 2026-07), /api/chat honors it.
+        # think=False (top-level, not inside options — verified 2026-08-02):
+        # stops Gemma from burning num_predict on hidden reasoning instead of
+        # the spoken reply.
         payload = {"model": self.model, "messages": msgs, "stream": True,
                    "keep_alive": self.keep_alive,
+                   "think": self.think,
                    "options": {"num_ctx": self.num_ctx,
                                "temperature": self.temperature,
                                "num_predict": 320}}
