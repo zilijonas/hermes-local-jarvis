@@ -19,6 +19,55 @@ import httpx
 TIMEOUT = httpx.Timeout(6.0, connect=3.0)
 
 
+def _file_lock(path):
+    """Cross-process single-flight for OAuth refresh grants.
+
+    Anthropic refresh tokens are single-use: two processes vendoring this
+    module (the dashboard plugin and jarvisd) refreshing the same chain
+    concurrently replay an already-rotated token and kill the whole chain —
+    the failure that took the Claude gauges down on 2026-08-09. Callers must
+    re-read the credential file after acquiring the lock so a refresh
+    completed by the other process is reused instead of redone.
+    """
+    import fcntl
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _lock():
+        handle = open(str(path) + ".lock", "a+")
+        try:
+            fcntl.lockf(handle, fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.lockf(handle, fcntl.LOCK_UN)
+            except Exception:
+                pass
+            handle.close()
+
+    return _lock()
+
+
+def _claude_keychain_creds() -> dict[str, Any] | None:
+    """Parse Claude Code's macOS keychain item (login keychain, service
+    "Claude Code-credentials"). Strictly a read-only consumer: the refresh
+    token in there is Claude Code's own single-use chain — consuming it here
+    would break Claude Code's session, so only the access token is ever used.
+    """
+    import json
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["security", "find-generic-password", "-w", "-s", "Claude Code-credentials"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if out.returncode != 0 or not out.stdout.strip():
+            return None
+        return json.loads(out.stdout.strip()).get("claudeAiOauth") or None
+    except Exception:
+        return None
+
+
 # Subscription monthly prices (USD). Sources: openai.com/chatgpt/pricing,
 # anthropic.com/pricing as of 2026. Update when providers shift pricing.
 CHATGPT_PLAN_PRICE_USD = {
@@ -81,31 +130,38 @@ def _hdr_int(headers, name: str):
 
 
 def _claude_subscription_label() -> str | None:
-    """Return the Claude subscription tier from the local creds file."""
+    """Return the Claude subscription tier from the local creds file,
+    falling back to the Claude Code keychain item."""
     import json
     from pathlib import Path
     p = Path.home() / ".claude" / ".credentials.json"
-    if not p.exists():
-        return None
-    try:
-        data = json.loads(p.read_text())
-        return data.get("claudeAiOauth", {}).get("subscriptionType")
-    except Exception:
-        return None
+    if p.exists():
+        try:
+            data = json.loads(p.read_text())
+            label = data.get("claudeAiOauth", {}).get("subscriptionType")
+            if label:
+                return label
+        except Exception:
+            pass
+    creds = _claude_keychain_creds()
+    return creds.get("subscriptionType") if creds else None
 
 
 def _claude_oauth_from_file() -> tuple[str | None, str | None]:
     """Get a working Anthropic OAuth access token.
 
     Tries (in order):
-      1. ~/.hermes/.anthropic_oauth.json — Hermes-managed; refreshes cleanly
-         since Hermes writes here AND the dashboard runs from this same
-         install. No keychain access needed.
-      2. ~/.claude/.credentials.json — fallback. Refreshable only if Claude
-         Code hasn't already burned the refresh token (single-use rotation).
+      1. ~/.hermes/auth.json credential pool — Hermes-managed (populated by
+         `hermes auth add anthropic`); refreshes cleanly, no keychain needed.
+      2. ~/.hermes/.anthropic_oauth.json — legacy Hermes-managed file.
+      3. Claude Code's macOS keychain item — read-only; Claude Code itself
+         keeps it fresh, so it survives reboots with zero rotation risk.
+      4. ~/.claude/.credentials.json — last resort. Refresh is single-use
+         rotation, so it runs under a cross-process file lock and never
+         falls back to a known-expired access token (that guarantees a 401).
 
     Returns (access_token, source_label) so we can surface why a refresh
-    might fail.
+    might fail; (None, "expired") means creds exist but no usable token.
     """
     import json
     import time
@@ -154,38 +210,89 @@ def _claude_oauth_from_file() -> tuple[str | None, str | None]:
             if access and exp > now_ms + 60_000:
                 return access, "hermes_oauth"
             if refresh:
-                t = _refresh_anthropic(refresh, hermes_path, hermes_format=True)
+                with _file_lock(hermes_path):
+                    # re-read: the other process may have refreshed already
+                    data = json.loads(hermes_path.read_text())
+                    access = data.get("accessToken") or data.get("access_token")
+                    refresh = data.get("refreshToken") or data.get("refresh_token") or refresh
+                    exp = int(data.get("expiresAt") or data.get("expires_at_ms") or 0)
+                    if access and exp > now_ms + 60_000:
+                        return access, "hermes_oauth"
+                    t = _refresh_anthropic(refresh, hermes_path, hermes_format=True)
                 if t:
                     return t, "hermes_oauth"
         except Exception:
             pass
 
-    # 3) Claude Code's credentials file.
+    # 3) Claude Code's keychain item — read-only, never refreshed here.
+    kc = _claude_keychain_creds()
+    if kc:
+        access = kc.get("accessToken")
+        exp = int(kc.get("expiresAt") or 0)
+        if access and (exp == 0 or exp > now_ms + 60_000):
+            return access, "claude_keychain"
+
+    # 4) Claude Code's credentials file.
     p = Path.home() / ".claude" / ".credentials.json"
     if not p.exists():
-        return None, None
-    try:
-        data = json.loads(p.read_text())
-    except Exception:
-        return None, None
+        return (None, "expired") if kc else (None, None)
 
-    creds = data.get("claudeAiOauth", {}) or {}
-    access = creds.get("accessToken")
-    refresh = creds.get("refreshToken")
-    expires_at_ms = int(creds.get("expiresAt") or 0)
+    def _read_creds():
+        try:
+            file_data = json.loads(p.read_text())
+        except Exception:
+            return None, None, None, 0
+        creds = file_data.get("claudeAiOauth", {}) or {}
+        return (
+            file_data,
+            creds.get("accessToken"),
+            creds.get("refreshToken"),
+            int(creds.get("expiresAt") or 0),
+        )
 
-    if access and expires_at_ms > now_ms + 60_000:
+    data, access, refresh, expires_at_ms = _read_creds()
+    if access and (expires_at_ms == 0 or expires_at_ms > now_ms + 60_000):
         return access, "claude_code"
 
     if refresh:
-        t = _refresh_anthropic(refresh, p, hermes_format=False, claude_data=data)
-        if t:
-            return t, "claude_code"
-    return access, "claude_code"
+        with _file_lock(p):
+            # Another process may have refreshed while we waited on the lock —
+            # reuse its result instead of replaying a rotated (dead) token.
+            data, access, refresh, expires_at_ms = _read_creds()
+            if access and expires_at_ms > now_ms + 60_000:
+                return access, "claude_code"
+            if refresh:
+                t = _refresh_anthropic(refresh, p, hermes_format=False, claude_data=data)
+                if t:
+                    return t, "claude_code"
+    # Whatever is left is known-expired; probing with it guarantees a 401,
+    # so report "creds exist but unusable" and let the caller surface a hint.
+    return None, "expired"
 
 
 def _refresh_anthropic_pool(refresh: str, pool_path, cred_id: str) -> str | None:
-    """Refresh an Anthropic credential stored in ~/.hermes/auth.json's pool."""
+    """Refresh an Anthropic credential stored in ~/.hermes/auth.json's pool.
+    Runs under the cross-process lock; if another process already refreshed
+    this entry while we waited, its fresh token is reused, not re-rotated."""
+    import json
+    import time
+    with _file_lock(pool_path):
+        try:
+            data = json.loads(pool_path.read_text())
+            for e in (data.get("credential_pool") or {}).get("anthropic") or []:
+                if e.get("id") == cred_id:
+                    access = e.get("access_token")
+                    exp = int(e.get("expires_at_ms") or 0)
+                    if access and exp > int(time.time() * 1000) + 60_000:
+                        return access
+                    refresh = e.get("refresh_token") or refresh
+                    break
+        except Exception:
+            pass
+        return _refresh_anthropic_pool_grant(refresh, pool_path, cred_id)
+
+
+def _refresh_anthropic_pool_grant(refresh: str, pool_path, cred_id: str) -> str | None:
     import json
     import time
     try:
@@ -302,6 +409,19 @@ async def _anthropic(client: httpx.AsyncClient) -> dict[str, Any]:
     if not oauth_token:
         oauth_token, oauth_source = _claude_oauth_from_file()
     if not api_key and not oauth_token:
+        if oauth_source == "expired":
+            # Credentials exist but no source can produce a live token —
+            # probing anyway guarantees a 401, so surface the state instead.
+            return {
+                "provider": "anthropic", "configured": True, "ok": False,
+                "auth": "oauth", "plan": _claude_subscription_label(),
+                "error": "no usable OAuth token (refresh chain expired)",
+                "hint": (
+                    "Run `hermes auth add anthropic` once (or `claude "
+                    "setup-token` + set CLAUDE_CODE_OAUTH_TOKEN in "
+                    "~/.hermes/.env) to mint a fresh token."
+                ),
+            }
         return {"provider": "anthropic", "configured": False}
     plan = _claude_subscription_label()  # e.g. "max", "pro"
 
