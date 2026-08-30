@@ -1,9 +1,17 @@
-"""Mediator loop — Gemma E4B conversation driver.
+"""Mediator loop — conversation driver.
 
-Talks straight to Ollama's OpenAI-compatible endpoint with a tiny prompt.
-Tool use is a one-line JSON protocol (see prompt.py) — model-agnostic, no
-dependency on Ollama tool templates. One tool per turn, max 3 tool hops,
-one malformed-JSON retry, then the mediator must speak.
+Two transports, chosen by `native`:
+
+  native=False  Ollama `/api/chat` with the one-line JSON tool protocol. Used
+                for small models with no tool-template support.
+  native=True   an OpenAI `/v1/chat/completions` endpoint (the local model
+                router) with real function schemas. Used for gpt-oss-20b, which
+                returns an EMPTY reply under the JSON-line protocol because it
+                puts calls on its native tool channel.
+
+Native tool calls are re-emitted downstream as the same one-line JSON, so the
+speakable-prefix, hop, and tool-dispatch logic below is shared by both. One tool
+per turn, max 3 tool hops, one malformed-JSON retry, then the mediator must speak.
 
 Streaming contract: text deltas go to `on_delta` as they arrive; the caller
 (pipeline) forwards sentences to TTS. A cancel_event aborts generation
@@ -19,7 +27,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 
-from .prompt import SYSTEM_PROMPT, task_event_message
+from .prompt import NATIVE_TOOLS, system_prompt, task_event_message
 
 MAX_TOOL_HOPS = 3
 _JSON_LINE = re.compile(r"^\s*\{.*\}\s*$", re.S)
@@ -33,9 +41,18 @@ VALID_TOOLS = {"memory_recall", "capability_search", "quick_action",
 class Mediator:
     def __init__(self, ollama_url: str, model: str, num_ctx: int = 8192,
                  keep_alive: str = "30m", history_turns: int = 12,
-                 temperature: float = 0.4, think: bool = False):
+                 temperature: float = 0.4, think: bool = False,
+                 native: bool = False, max_tokens: int = 512):
         self.url = ollama_url.rstrip("/")
         self.model = model
+        # native=True -> OpenAI endpoint + real tool schemas (see module docstring).
+        # The prompt has to match the transport: telling a native tool-caller to
+        # emit a JSON line is what produced the empty replies.
+        self.native = native
+        self.system_prompt = system_prompt(native=native)
+        # Reasoning models spend output budget before the spoken reply; 512 leaves
+        # room for both. Ollama's num_predict stays at 320 (no hidden reasoning).
+        self.max_tokens = max_tokens
         self.num_ctx = num_ctx
         self.keep_alive = keep_alive
         self.history_turns = history_turns
@@ -53,6 +70,7 @@ class Mediator:
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=3.0))
         self.last_reply = ""
         self._partial_spoken = ""
+        self._last_call: dict | None = None   # native tool call awaiting its result
 
     # ------------------------------------------------------------------
     def notify_task_event(self, task: dict) -> None:
@@ -83,6 +101,15 @@ class Mediator:
 
     async def warmup(self) -> bool:
         try:
+            if self.native:
+                # Router loads on demand; this first call pays the load so the
+                # user's first spoken turn does not.
+                await self._client.post(
+                    f"{self.url}/v1/chat/completions",
+                    json={"model": self.model, "max_tokens": 1,
+                          "messages": [{"role": "user", "content": "hi"}]},
+                    timeout=httpx.Timeout(180.0, connect=3.0))
+                return True
             await self._client.post(f"{self.url}/api/chat", json={
                 "model": self.model, "stream": False, "keep_alive": self.keep_alive,
                 "think": self.think,
@@ -103,7 +130,7 @@ class Mediator:
         first_token_ms: Optional[float] = None
         cancel = cancel or asyncio.Event()
 
-        msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+        msgs = [{"role": "system", "content": self.system_prompt}]
         msgs += self.history[-2 * self.history_turns:]
         for ev in self.pending_events:
             msgs.append({"role": "system", "content": ev})
@@ -191,10 +218,23 @@ class Mediator:
                     result = {"error": f"tool failed: {e}"}
                 on_tool(name, args, "end")
                 tool_calls.append({"name": name, "args": args, "result": result})
-                msgs.append({"role": "assistant", "content": stripped})
-                msgs.append({"role": "system",
-                             "content": f"[tool result] {json.dumps(result, ensure_ascii=False)[:1200]}\n"
-                                        "Now answer the user in plain speech."})
+                payload = json.dumps(result, ensure_ascii=False)[:1200]
+                if self.native and self._last_call:
+                    call = self._last_call
+                    msgs.append({"role": "assistant", "content": None,
+                                 "tool_calls": [{"id": call["id"], "type": "function",
+                                                 "function": {"name": call["name"],
+                                                              "arguments": call["arguments"]}}]})
+                    msgs.append({"role": "tool", "tool_call_id": call["id"],
+                                 "content": payload})
+                    msgs.append({"role": "system",
+                                 "content": "Now answer the user in plain speech."})
+                    self._last_call = None
+                else:
+                    msgs.append({"role": "assistant", "content": stripped})
+                    msgs.append({"role": "system",
+                                 "content": f"[tool result] {payload}\n"
+                                            "Now answer the user in plain speech."})
                 continue
 
             if not spoken and stripped:      # withheld text that wasn't a tool call
@@ -234,7 +274,11 @@ class Mediator:
 
     # ------------------------------------------------------------------
     async def _stream(self, msgs: list[dict], cancel: asyncio.Event, fmt=None):
-        # Native /api/chat, NOT /v1: the OpenAI endpoint silently ignores
+        if self.native:
+            async for delta in self._stream_openai(msgs, cancel):
+                yield delta
+            return
+        # Ollama /api/chat, NOT /v1: the OpenAI endpoint silently ignores
         # options.num_ctx (verified on this box 2026-07), /api/chat honors it.
         # think=False (top-level, not inside options — verified 2026-08-02):
         # stops Gemma from burning num_predict on hidden reasoning instead of
@@ -264,6 +308,62 @@ class Mediator:
                 delta = (chunk.get("message") or {}).get("content") or ""
                 if delta:
                     yield delta
+
+    async def _stream_openai(self, msgs: list[dict], cancel: asyncio.Event):
+        """Stream from an OpenAI-compatible endpoint with real tool schemas.
+
+        Content deltas are yielded as they arrive so TTS starts early. Reasoning
+        deltas are dropped — they must never reach the speaker. A tool call is
+        accumulated across deltas and yielded at the end as the same one-line
+        JSON the Ollama path produces, so the caller needs no special case.
+        """
+        payload = {"model": self.model, "messages": msgs, "stream": True,
+                   "temperature": self.temperature,
+                   "max_tokens": self.max_tokens,
+                   "tools": NATIVE_TOOLS}
+        name, arg_buf, spoke, call_id = None, "", False, None
+        async with self._client.stream(
+                "POST", f"{self.url}/v1/chat/completions", json=payload) as r:
+            r.raise_for_status()
+            async for line in r.aiter_lines():
+                if cancel.is_set():
+                    break
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                body = line[5:].strip()
+                if body == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(body)
+                except json.JSONDecodeError:
+                    continue
+                for choice in chunk.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    for tc in (delta.get("tool_calls") or []):
+                        fn = tc.get("function") or {}
+                        name = fn.get("name") or name
+                        call_id = tc.get("id") or call_id
+                        arg_buf += fn.get("arguments") or ""
+                    text = delta.get("content") or ""
+                    if text:
+                        spoke = True
+                        yield text
+        if name and not cancel.is_set():
+            try:
+                args = json.loads(arg_buf) if arg_buf.strip() else {}
+            except json.JSONDecodeError:
+                args = {}
+            # Remembered for the history the next hop sends back: a native model
+            # needs its own call echoed as assistant.tool_calls plus a matching
+            # role="tool" result. Fed the result as a system message instead, it
+            # does not recognise the call as answered and simply repeats it until
+            # the hop budget runs out ("lost my train of thought").
+            self._last_call = {"id": call_id or "call_0", "name": name,
+                               "arguments": arg_buf or "{}"}
+            # Leading newline when prose came first: _speakable_prefix splits on
+            # a `{` at line start, so without it the JSON would be spoken aloud.
+            yield ("\n" if spoke else "") + json.dumps({"tool": name, "args": args})
 
     @staticmethod
     def _speakable_prefix(buf: str) -> str:

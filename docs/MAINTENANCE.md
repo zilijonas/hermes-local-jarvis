@@ -38,10 +38,12 @@ on the other's cadence.
 ## Model updates
 
 ```sh
-# Ollama models — re-pull to refresh
-ollama pull gemma4:e4b-it-qat
-ollama pull granite4.1-local-64k
+# Ollama now holds embeddings only; the chat model lives in the router.
 ollama pull nomic-embed-text
+
+# Chat model: replace the GGUF the router points at, then restart it.
+#   ~/ai/qwen38-bench/models/gpt-oss-20b-MXFP4.gguf
+#   launchctl kickstart -k gui/$(id -u)/local.hermesagent.modelrouter
 
 # kokoro TTS — replace the two files in place, then restart jarvisd
 # (model load is lazy-on-first-use, so a restart is the clean way to pick up new weights)
@@ -112,7 +114,7 @@ Intended path: `bench/run_bench.py`. As of this writing the `bench/`
 directory in this repo is still empty (no `run_bench.py` present yet) —
 this section documents where it will live once added, not a command you can
 run today. Baseline numbers already gathered by hand (see
-`docs/AUDIT-baseline.md`, `docs/hermes-profiles-sessions.md`): granite warm
+`docs/AUDIT-baseline.md`, `docs/hermes-profiles-sessions.md`): those warm
 round-trip 0.2–0.4 s, gemma cold load 6.3 s / warm 0.38 s, profile one-shot
 cold `hermes -z` ~79–92 s (model swap + prefill) / warm 2–5 s.
 
@@ -120,10 +122,9 @@ cold `hermes -z` ~79–92 s (model swap + prefill) / warm 2–5 s.
 
 | Item | Disk | Notes |
 |---|---|---|
-| gemma4:e4b-it-qat (Ollama) | 6.1 GB | mediator |
-| granite4.1-local-64k (Ollama) | 5.3 GB | worker |
+| gpt-oss-20b-MXFP4.gguf (router) | 11.7 GB | mediator AND worker — one copy |
 | nomic-embed-text (Ollama) | 0.27 GB | memory embeddings |
-| `~/.ollama/models` total | 11 GB | layers de-duplicated across tags (e.g. `granite4.1:8b` shares blobs with `-local-64k`) |
+| `~/.ollama/models` total | 262 MB | chat models removed 2026-08-30 (was 11 GB) |
 | `~/ai/models/kokoro/` | 347 MB | TTS, in active use |
 | `~/ai/models/whisper/` | 606 MB | ggml, currently unused (see Model updates) |
 | `jarvis.db` | ~2 MB, grows with tasks/turns/memory index | WAL mode — also see `jarvis.db-wal`/`-shm` |
@@ -133,8 +134,7 @@ cold `hermes -z` ~79–92 s (model swap + prefill) / warm 2–5 s.
 
 | RAM (24 GB box) | Budget | Notes |
 |---|---|---|
-| gemma4:e4b-it-qat @ 8k ctx | ≈3.5–4 GB | `keep_alive 30m` |
-| granite4.1-local-64k @ 65536 ctx | ≈5–7 GB (up to ~10 GB observed via `ollama ps`) | loads on demand |
+| gpt-oss-20b @ 65536 ctx | ≈11.7 GB resident | serves mediator + worker; router idle-unloads after 900 s |
 | faster-whisper base.en int8 | ≈0.3 GB | |
 | kokoro-onnx | ≈0.5 GB | |
 | jarvisd + dashboard UI | ≈0.4 GB | |

@@ -1,7 +1,8 @@
 """Worker task manager.
 
 Executes delegated tasks outside the mediator's latency path:
-  - granite: `hermes -p jarvis-voice -z <prompt> --yolo -t <toolsets>` subprocess
+  - local:   `hermes -p jarvis-voice -z <prompt> --yolo -t <toolsets>` subprocess
+             (gpt-oss-20b via the model router -- the same model the mediator uses)
   - codex:   `~/ai/bin/codex-task.sh` (availability-gated, single dispatch, no retries)
 
 Design rules (see docs/SPEC.md):
@@ -37,7 +38,7 @@ PROFILE = "jarvis-voice"
 
 # Selectable engines for complex tasks + tool calling. The user picks one; every
 # delegate_task runs on it (the mediator/voice loop is unaffected).
-BACKENDS = ("granite", "cloud", "codex", "claude")
+BACKENDS = ("local", "cloud", "codex", "claude")
 _SECRET_RE = re.compile(r"(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", re.I)
 
 _ERROR_MARKERS = re.compile(
@@ -50,12 +51,12 @@ _ARTIFACT_RE = re.compile(r"(?:^|[\s`'\"(])(/(?:Users|tmp|private)/[^\s`'\")\]]+
 class WorkerManager:
     def __init__(self, db, bus, hermes_bin: str = HERMES_BIN,
                  codex_bin: str = CODEX_TASK, max_concurrent: int = 2,
-                 backend: str = "granite"):
+                 backend: str = "local"):
         self.db = db
         self.bus = bus
         self.hermes_bin = hermes_bin
         self.codex_bin = codex_bin
-        self.backend = backend if backend in BACKENDS else "granite"
+        self.backend = backend if backend in BACKENDS else "local"
         self.sem = asyncio.Semaphore(max_concurrent)
         try:  # constructed inside the app lifespan → the event loop is running
             self.loop = asyncio.get_running_loop()
@@ -64,10 +65,12 @@ class WorkerManager:
         self.procs: dict[str, subprocess.Popen] = {}
         self.on_outcome: Optional[Callable[[str, bool], None]] = None  # capability feedback
         self.on_task_event: Optional[Callable[[dict], None]] = None    # pipeline hook
-        # Loading granite evicts the mediator on this 24 GB box. If a worker starts
-        # while a voice turn is mid-flight, gemma dies right before it must speak
-        # (the "lost my train of thought" class). Pipeline sets this to an awaitable
-        # that resolves when no turn is active.
+        # Worker and mediator now share one model, so a worker start no longer evicts
+        # anything. This gate is still worth keeping: a worker's prefill competes with
+        # a voice turn for the GPU, and starting one mid-utterance makes the reply
+        # stutter. Pipeline sets this to an awaitable that resolves when no turn is
+        # active. (The router runs 2 slots, so a turn issued *during* a worker task
+        # still answers in ~1.6s instead of waiting ~37s for it to finish.)
         self.wait_turn_clear: Optional[Callable[[], "asyncio.Future"]] = None
 
     # ---------------------------------------------------------------- boot
@@ -100,7 +103,7 @@ class WorkerManager:
 
     def availability(self) -> dict[str, bool]:
         """Cheap, no-token reachability per backend."""
-        avail = {"granite": True, "cloud": True, "codex": False, "claude": False}
+        avail = {"local": True, "cloud": True, "codex": False, "claude": False}
         # cloud: the default profile must exist and carry some credential.
         default_env = os.path.expanduser("~/.hermes/.env")
         default_auth = os.path.expanduser("~/.hermes/auth.json")
@@ -243,7 +246,7 @@ class WorkerManager:
                     return  # canceled while waiting
             try:
                 runner = {"codex": self._run_codex, "cloud": self._run_cloud,
-                          "claude": self._run_claude}.get(t["kind"], self._run_granite)
+                          "claude": self._run_claude}.get(t["kind"], self._run_local)
                 await runner(t)
             except Exception as e:  # noqa: BLE001 — worker crash must not kill jarvisd
                 self.db.update_task(task_id, status="failed",
@@ -253,7 +256,7 @@ class WorkerManager:
                 self.procs.pop(task_id, None)
                 self._feedback(task_id)
 
-    async def _run_granite(self, t: dict[str, Any]) -> None:
+    async def _run_local(self, t: dict[str, Any]) -> None:
         task_id = t["id"]
         prompt = t["goal"] if not t["context"] else f"{t['goal']}\n\nContext:\n{t['context']}"
         usage_file = f"/tmp/jarvis-usage-{task_id}.json"
@@ -270,7 +273,7 @@ class WorkerManager:
                                 cwd=workspace if os.path.isdir(workspace) else None)
         self.procs[task_id] = proc
         self.db.update_task(task_id, status="running", started=time.time(), pid=proc.pid)
-        self._emit(task_id, note="granite worker started")
+        self._emit(task_id, note="local worker started")
 
         out = await self._stream_proc(task_id, proc)
         usage = None

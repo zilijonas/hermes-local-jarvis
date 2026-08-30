@@ -1,6 +1,6 @@
 # Capability manifest — what Jarvis can do and what each capability needs.
 # kind: quick   → handled instantly inside jarvisd (no LLM worker)
-# kind: granite → Hermes worker session; `toolsets` = the ONLY toolsets passed via -t
+# kind: local → Hermes worker session; `toolsets` = the ONLY toolsets passed via -t
 # kind: codex   → big delegated job via codex-task.sh
 # keywords are matched lexically + by embedding; keep them spoken-language flavored.
 
@@ -22,22 +22,22 @@
   keywords: [repeat, again, "say that again", pardon]
 
 - id: files.search
-  kind: granite
+  kind: local
   name: find or read files on this Mac
   toolsets: [file]
   keywords: [find file, read file, search files, folder, directory, open file, list files]
 - id: files.edit
-  kind: granite
+  kind: local
   name: create or modify a file
   toolsets: [file]
   keywords: [write file, edit, save note, create file, append]
 - id: shell.ops
-  kind: granite
+  kind: local
   name: run terminal commands / process checks
   toolsets: [terminal]
   keywords: [run command, terminal, process, kill, restart service, disk space, logs]
 - id: shell.files
-  kind: granite
+  kind: local
   name: combined file + terminal task
   toolsets: [file, terminal]
   keywords: [script, install, move files, backup, archive, organize]

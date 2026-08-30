@@ -17,13 +17,20 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "jarvisd.toml"
 
 DEFAULTS: dict[str, Any] = {
     "server": {"host": "127.0.0.1", "port": 9140},
+    # Section name is historical. Only `embed` still runs on Ollama; the mediator
+    # and worker are served by the model router on 8090.
     "ollama": {
         "url": "http://127.0.0.1:11434",
-        "mediator": "gemma4:e4b-it-qat",
-        "worker": "granite4.1-local-64k",
+        "mediator": "gpt-oss-20b-mxfp4",
+        "worker": "gpt-oss-20b-mxfp4",
         "embed": "nomic-embed-text",
         "mediator_num_ctx": 8192,
         "keep_alive": "30m",
+        # The mediator may live somewhere other than Ollama. Empty -> use `url`.
+        # `mediator_native` selects real tool schemas over the JSON-line
+        # protocol; required for gpt-oss-20b (see mediator/prompt.py).
+        "mediator_url": "http://127.0.0.1:8090",
+        "mediator_native": True,
     },
     "stt": {"model": "base.en", "compute": "int8", "device": "cpu", "partial_interval_ms": 600},
     "vad": {"aggressiveness": 2, "endpoint_ms": 500, "min_speech_ms": 200},
@@ -34,7 +41,7 @@ DEFAULTS: dict[str, Any] = {
         "models": "~/ai/models",
     },
     "budgets": {"context_card_tokens": 600, "mediator_history_turns": 12},
-    "worker": {"backend": "granite"},
+    "worker": {"backend": "local"},
 }
 
 

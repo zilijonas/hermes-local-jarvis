@@ -5,20 +5,25 @@ this as cwd unless stated otherwise.
 
 ## Prerequisites
 
-1. **Ollama** running on `127.0.0.1:11434` with these models pulled:
+1. **The model router** on `127.0.0.1:8090` (LaunchAgent
+   `local.hermesagent.modelrouter`, script `~/ai/qwen38-bench/scripts/modelrouter.py`)
+   serving **gpt-oss-20b MXFP4** via llama.cpp. This is both the mediator and
+   the worker — one resident copy, so delegating a task cannot evict the model
+   that has to keep talking.
+
+   Hermes enforces `MINIMUM_CONTEXT_LENGTH = 64_000` for any session model. The
+   router satisfies that at the server (`--ctx-size 65536`), so no per-request
+   `num_ctx` alias is needed — that requirement was an Ollama-specific
+   workaround, because Ollama's `/v1` silently ignores `options.num_ctx`.
+
+2. **Ollama** on `127.0.0.1:11434`, for embeddings only:
    ```sh
-   ollama pull gemma4:e4b-it-qat        # mediator, ~6.1 GB
-   ollama pull granite4.1-local-64k     # worker, ~5.3 GB — must be the -local-64k alias
    ollama pull nomic-embed-text         # memory embeddings, ~0.27 GB
    ```
-   `granite4.1-local-64k` matters specifically: Hermes enforces
-   `MINIMUM_CONTEXT_LENGTH = 64_000` for any model used in a session, and
-   this alias is the one carrying `ollama_num_ctx: 65536`. A plain
-   `granite4.1:8b` pull will not satisfy Hermes sessions.
-2. **kokoro-onnx TTS model files** at `~/ai/models/kokoro/`:
+3. **kokoro-onnx TTS model files** at `~/ai/models/kokoro/`:
    - `kokoro-v1.0.onnx`
    - `voices-v1.0.bin`
-3. **faster-whisper STT** — no manual model file needed; `faster_whisper.WhisperModel("base.en")`
+4. **faster-whisper STT** — no manual model file needed; `faster_whisper.WhisperModel("base.en")`
    downloads its own CTranslate2-format weights on first load. Optional:
    ggml `.bin` files at `~/ai/models/whisper/` (e.g. `ggml-base.en.bin`) are
    NOT consumed by the current faster-whisper path (different format,
@@ -47,19 +52,22 @@ repo — treat the live file as source of truth). Key decisions baked in:
 
 - `fallback_providers: []`, no `fallback_model` — main model never falls to
   cloud on failure.
-- `model.provider: custom`, `base_url: http://127.0.0.1:11434/v1`,
-  `context_length: 65536`, `ollama_num_ctx: 65536` — worker is
-  `granite4.1-local-64k` via Ollama's OpenAI-compatible endpoint.
+- `model.provider: custom`, `base_url: http://127.0.0.1:8090/v1`,
+  `context_length: 65536` — worker is `gpt-oss-20b-mxfp4` via the model router.
+  No `ollama_num_ctx`: llama.cpp fixes context at server start.
 - `auxiliary.*` (vision, web_extract, compression, skills_hub, approval) each
-  pinned to `provider: custom` + explicit Ollama `base_url` — this closes the
+  pinned to `provider: custom` + explicit router `base_url` — this closes the
   `provider: auto` → openrouter/nous/local/any-API-key cloud-leak path.
 - `toolsets: [file, terminal, web, todo, clarify]` plus a long
   `agent.disabled_toolsets` list (session_search, code_execution, vision,
   video, image_gen, video_gen, x_search, moa, tts, context_engine,
   messaging, homeassistant, spotify, yuanbao, computer_use) — lean tool
-  surface, cuts prefill for the Granite worker.
-- `agent.reasoning_effort: false` — granite4.1 has no thinking mode; `true`
-  makes Ollama return 400.
+  surface, cuts prefill for the worker.
+- `agent.reasoning_effort: false` — reasoning is configured once on the llama.cpp
+  server (`--reasoning-effort low`); Hermes only wires this field through for
+  ollama.com/OpenRouter/LM Studio, never for `provider: custom`. Do NOT try to
+  disable reasoning per request: `--reasoning-budget 0` measured 8 points worse
+  on the tool suite (27/29 → 19/29).
 - `plugins.enabled: [jarvis-voice]`.
 - `stt.enabled: true`, `stt.provider: local` (faster-whisper) — this is the
   dashboard's `/api/audio/transcribe` fallback path, separate from jarvisd's

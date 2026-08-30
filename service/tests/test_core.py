@@ -21,7 +21,11 @@ def test_config_defaults_when_file_missing(tmp_path):
     cfg = config_mod.load_config(tmp_path / "missing.toml")
     assert cfg.data["server"]["port"] == 9140
     assert cfg.data["tts"]["voice"] == "am_michael"
-    assert cfg.data["ollama"]["mediator"] == "gemma4:e4b-it-qat"
+    assert cfg.data["ollama"]["mediator"] == "gpt-oss-20b-mxfp4"
+    # mediator and worker are the same model on purpose: one resident copy, so a
+    # delegated task cannot evict the thing that has to keep talking.
+    assert cfg.data["ollama"]["worker"] == cfg.data["ollama"]["mediator"]
+    assert cfg.data["ollama"]["mediator_native"] is True
     assert cfg.path_for("hermes_home") == Path("~/.hermes/profiles/jarvis-voice").expanduser()
 
 
@@ -62,7 +66,7 @@ def test_config_attribute_style_section_access(tmp_path):
 
 def test_db_schema_and_task_dao_roundtrip(tmp_path):
     db = Database(tmp_path / "jarvis.db")
-    task = db.create_task(kind="granite", goal="do a thing", context="ctx", toolsets="fs,web")
+    task = db.create_task(kind="local", goal="do a thing", context="ctx", toolsets="fs,web")
     assert task["status"] == "queued"
     assert task["events"] == []
 
@@ -85,7 +89,7 @@ def test_db_create_task_accepts_caller_supplied_id_and_metadata(tmp_path):
     # workers.manager.WorkerManager.delegate() mints its own task_id up front (to publish
     # bus events before the row exists) and passes a metadata dict for capability feedback.
     db = Database(tmp_path / "jarvis.db")
-    task = db.create_task("abc123", kind="granite", goal="g", metadata={"capability_id": "cap.x"})
+    task = db.create_task("abc123", kind="local", goal="g", metadata={"capability_id": "cap.x"})
     assert task["id"] == "abc123"
     assert task["metadata"] == {"capability_id": "cap.x"}
 
@@ -230,7 +234,7 @@ def test_task_lifecycle_via_db_then_http(tmp_path):
     app = _make_test_app(tmp_path)
     with TestClient(app) as client:
         db = app.state.db
-        task = db.create_task(kind="granite", goal="say hi")
+        task = db.create_task(kind="local", goal="say hi")
 
         r = client.get(f"/tasks/{task['id']}")
         assert r.status_code == 200

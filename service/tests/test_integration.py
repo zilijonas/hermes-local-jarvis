@@ -484,7 +484,7 @@ def test_restart_recovery_reconciles_orphaned_task():
 
 
 def _build_worker_env(source_env: dict) -> dict:
-    """Verbatim regex from jarvisd/workers/manager.py:141 (_run_granite), extracted here
+    """Verbatim regex from jarvisd/workers/manager.py:141 (_run_local), extracted here
     since that filter is inlined rather than a standalone helper we could import."""
     return {k: v for k, v in source_env.items()
             if not re.search(r"(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", k, re.I)}

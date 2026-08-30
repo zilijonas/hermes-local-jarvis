@@ -67,8 +67,8 @@ def _shape(raw: dict[str, Any]) -> dict[str, Any]:
     prov = _by_provider(raw)
     out: dict[str, Any] = {}
 
-    # granite — always free, on-box, no gauge.
-    out["granite"] = {"available": True, "tier": "free", "gauges": [],
+    # local — always free, on-box, no gauge.
+    out["local"] = {"available": True, "tier": "free", "gauges": [],
                       "note": "on-device · free", "phase": "ok"}
 
     # cloud — OpenRouter. The user's key carries a WEEKLY spend limit:

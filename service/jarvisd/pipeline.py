@@ -63,7 +63,7 @@ class Pipeline:
 
     async def _wait_turn_clear(self) -> None:
         """Workers hold their (mediator-evicting) model load until no voice turn
-        is mid-flight, so gemma never dies right before it must speak."""
+        is mid-flight, so a worker's prefill never lands under an utterance."""
         while self._turn_active or self._speaking:
             await asyncio.sleep(0.25)
 
@@ -432,11 +432,11 @@ class Pipeline:
             goal = str(args.get("goal", "")).strip()
             if not goal:
                 return {"error": "goal required"}
-            kind = args.get("kind", "granite")
-            if kind not in ("granite", "codex"):
-                kind = "granite"
+            kind = args.get("kind", "local")
+            if kind not in ("local", "codex"):
+                kind = "local"
             cap = self.caps.best(goal)
-            toolsets = cap["toolsets"] if cap and cap["kind"] == "granite" else ["file", "terminal"]
+            toolsets = cap["toolsets"] if cap and cap["kind"] == "local" else ["file", "terminal"]
             if cap and cap["kind"] == "codex":
                 kind = "codex"
             return await self.workers.delegate(
@@ -503,8 +503,9 @@ class Pipeline:
         """WorkerManager calls this on completion-grade transitions; the mediator
         surfaces it on the next turn, and finished tasks are announced aloud."""
         self.mediator.notify_task_event(task)
-        # A granite worker run usually evicted gemma (24 GB box can't hold both) —
-        # re-warm the mediator now so the next voice turn isn't a 6 s cold load.
+        # Mediator and worker share one model now, so a finished task leaves it
+        # resident. Kept as a cheap no-op guard: if the router idle-unloaded during
+        # a long task, this pays the reload here rather than under the next turn.
         asyncio.get_running_loop().create_task(self.mediator.warmup())
         if task.get("status") in ("done", "failed", "needs_review"):
             summary = task.get("result_summary") or ""

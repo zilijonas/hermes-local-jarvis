@@ -61,6 +61,32 @@ async def _probe_ollama(cfg: JarvisConfig) -> dict[str, Any]:
 async def _probe_models(cfg: JarvisConfig) -> dict[str, Any]:
     mediator_name = cfg.data["ollama"]["mediator"]
     worker_name = cfg.data["ollama"]["worker"]
+
+    if cfg.data["ollama"].get("mediator_native"):
+        # Mediator is served by the model router, not Ollama. /v1/status reports
+        # what is actually loaded; /v1/models would answer 200 with no backend up.
+        base = (cfg.data["ollama"].get("mediator_url")
+                or cfg.data["ollama"]["url"]).rstrip("/")
+        loaded, up = None, False
+        try:
+            async with httpx.AsyncClient(timeout=_HEALTH_TIMEOUT_S) as client:
+                resp = await client.get(f"{base}/v1/status")
+                resp.raise_for_status()
+                data = resp.json()
+                loaded, up = data.get("loaded"), bool(data.get("up"))
+        except Exception:
+            pass  # degrade gracefully — reported as not-resident
+        same = mediator_name == worker_name
+        return {
+            "mediator": {"name": mediator_name,
+                         "resident": up and loaded == mediator_name},
+            # One model serving both roles: the worker is resident exactly when
+            # the mediator is, and no eviction happens between them.
+            "worker": {"name": worker_name,
+                       "resident": (up and loaded == mediator_name) if same
+                       else (up and loaded == worker_name)},
+        }
+
     resident: set[str] = set()
     url = cfg.data["ollama"]["url"].rstrip("/") + "/api/ps"
     try:
@@ -71,7 +97,7 @@ async def _probe_models(cfg: JarvisConfig) -> dict[str, Any]:
                 name = model.get("name") or model.get("model")
                 if name:
                     resident.add(name)
-                    resident.add(name.removesuffix(":latest"))  # ps reports granite...:latest
+                    resident.add(name.removesuffix(":latest"))  # ps reports name:latest
     except Exception:
         pass  # health degrades gracefully — models simply report not-resident
     return {
@@ -142,7 +168,7 @@ def create_app(config: JarvisConfig | None = None) -> FastAPI:
         worker_manager_cls = _try_import_attr("jarvisd.workers.manager", "WorkerManager")
         if worker_manager_cls is not None:
             try:
-                backend = (cfg.data.get("worker") or {}).get("backend", "granite")
+                backend = (cfg.data.get("worker") or {}).get("backend", "local")
                 app.state.workers = worker_manager_cls(db, bus, backend=backend)
                 app.state.workers.reconcile_on_boot()
             except Exception:
@@ -180,10 +206,12 @@ def create_app(config: JarvisConfig | None = None) -> FastAPI:
                                voices_path=str(kokoro_dir / "voices-v1.0.bin"),
                                default_voice=cfg.data["tts"]["voice"],
                                default_speed=cfg.data["tts"]["speed"])
-            mediator = Mediator(ollama_url=cfg.data["ollama"]["url"],
+            mediator = Mediator(ollama_url=(cfg.data["ollama"].get("mediator_url")
+                                            or cfg.data["ollama"]["url"]),
                                 model=cfg.data["ollama"]["mediator"],
                                 num_ctx=cfg.data["ollama"]["mediator_num_ctx"],
                                 keep_alive=cfg.data["ollama"]["keep_alive"],
+                                native=bool(cfg.data["ollama"].get("mediator_native")),
                                 history_turns=cfg.data["budgets"]["mediator_history_turns"])
             stt.load()
             tts.load()
@@ -279,10 +307,10 @@ def create_app(config: JarvisConfig | None = None) -> FastAPI:
         """Selector data: which engines exist, which is active, which are reachable."""
         workers = request.app.state.workers
         active = workers.backend if workers is not None else \
-            (request.app.state.config.data.get("worker") or {}).get("backend", "granite")
+            (request.app.state.config.data.get("worker") or {}).get("backend", "local")
         avail = workers.availability() if workers is not None else {}
         return {"active": active, "available": avail,
-                "backends": ["granite", "cloud", "codex", "claude"]}
+                "backends": ["local", "cloud", "codex", "claude"]}
 
     @app.post("/backends")
     async def set_backend(request: Request) -> dict[str, Any]:

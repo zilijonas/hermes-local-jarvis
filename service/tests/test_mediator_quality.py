@@ -146,7 +146,7 @@ def test_mediator_quality_battery(base_url):
     http_post_json(f"{base_url}/converse", {"reset": True}, timeout=10.0)
     results = []
     for name, text, checker in TURNS:
-        # 150s: a turn that delegates triggers a real granite cold-load (~60-90s
+        # 150s: a turn that delegates can trigger a real model cold-load (~60-90s
         # on this 24 GB box, which evicts the mediator); back-to-back typed turns
         # with no gaps can stack that onto the next mediator call. Live voice use
         # has gaps + mic.start pre-warm, so it doesn't hit this.

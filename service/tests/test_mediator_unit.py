@@ -96,3 +96,90 @@ def test_parse_tool_valid_and_invalid():
         "memory_recall", {"query": "x"})
     assert Mediator._parse_tool('{"tool":"not_a_tool","args":{}}') is None
     assert Mediator._parse_tool("not json") is None
+
+
+# ---------------------------------------------------------------------------
+# Native tool-schema path (2026-08-30). gpt-oss-20b puts calls on its own tool
+# channel; under the JSON-line protocol it returned EMPTY replies (3/10 on the
+# routing suite vs 8/10 with real schemas). These lock in the two things that
+# made it work: schemas are actually sent, and a native call is re-emitted as
+# the same JSON line the rest of the loop already understands.
+# ---------------------------------------------------------------------------
+
+def _native_mediator(handler):
+    m = Mediator(ollama_url="http://127.0.0.1:8090", model="gpt-oss-20b-mxfp4",
+                 native=True)
+    m._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return m
+
+
+def _sse(*chunks: dict) -> bytes:
+    body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks)
+    return (body + "data: [DONE]\n\n").encode()
+
+
+@pytest.mark.asyncio
+async def test_native_stream_posts_tool_schemas_to_v1():
+    captured: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append((str(request.url), json.loads(request.content)))
+        return httpx.Response(200, content=_sse(
+            {"choices": [{"delta": {"content": "Hello."}}]}))
+
+    m = _native_mediator(handler)
+    out = "".join([d async for d in m._stream([{"role": "user", "content": "hi"}],
+                                              asyncio.Event())])
+    url, body = captured[0]
+    assert url.endswith("/v1/chat/completions")          # not /api/chat
+    names = [t["function"]["name"] for t in body["tools"]]
+    assert "delegate_task" in names and len(names) == 6
+    assert "think" not in body                            # Ollama-only field
+    assert out == "Hello."
+
+
+@pytest.mark.asyncio
+async def test_native_tool_call_is_reemitted_as_json_line():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse(
+            {"choices": [{"delta": {"tool_calls": [
+                {"function": {"name": "quick_action", "arguments": '{"action_'}}]}}]},
+            {"choices": [{"delta": {"tool_calls": [
+                {"function": {"arguments": 'id": "time.now"}'}}]}}]}))
+
+    m = _native_mediator(handler)
+    out = "".join([d async for d in m._stream([{"role": "user", "content": "time?"}],
+                                              asyncio.Event())])
+    # Split across deltas, so it must be reassembled before parsing.
+    assert Mediator._parse_tool(out) == ("quick_action", {"action_id": "time.now"})
+    assert Mediator._speakable_prefix(out) == ""          # never spoken aloud
+
+
+@pytest.mark.asyncio
+async def test_native_reasoning_deltas_are_never_spoken():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse(
+            {"choices": [{"delta": {"reasoning_content": "The user wants the time."}}]},
+            {"choices": [{"delta": {"content": "It's half past four."}}]}))
+
+    m = _native_mediator(handler)
+    out = "".join([d async for d in m._stream([{"role": "user", "content": "time?"}],
+                                              asyncio.Event())])
+    assert out == "It's half past four."
+
+
+@pytest.mark.asyncio
+async def test_native_prose_then_tool_call_keeps_json_off_the_speaker():
+    """A turn that speaks AND calls: the JSON must land on its own line, or
+    _speakable_prefix (which splits on a `{` at line start) would voice it."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse(
+            {"choices": [{"delta": {"content": "One sec."}}]},
+            {"choices": [{"delta": {"tool_calls": [
+                {"function": {"name": "memory_recall",
+                              "arguments": '{"query": "bot"}'}}]}}]}))
+
+    m = _native_mediator(handler)
+    out = "".join([d async for d in m._stream([{"role": "user", "content": "x"}],
+                                              asyncio.Event())])
+    assert Mediator._speakable_prefix(out) == "One sec."

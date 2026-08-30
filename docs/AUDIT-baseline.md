@@ -1,3 +1,10 @@
+> **Superseded in part (2026-08-30).** This is a dated record; its numbers were
+> true when written. Since then Jarvis runs ONE model — gpt-oss-20b MXFP4 via the
+> llama.cpp model router on `127.0.0.1:8090` — as both mediator and worker. The
+> Gemma mediator and Granite worker described below are gone, and the
+> "24 GB cannot hold both / worker evicts mediator" constraint no longer applies.
+> Current design: `docs/VOICE_MODEL_ABX.md` and ADR-0012 in the Obsidian vault.
+
 # Jarvis Phase 1 baseline — 2026-07-27
 
 ## Host

@@ -5,7 +5,7 @@ Agreed with Linas; implementation lands when the updated design arrives.
 ## Backends (worker tier — complex tasks + real tool calling)
 | id | runs | auth | notes |
 |---|---|---|---|
-| granite | `hermes -p local -z … --yolo` subprocess | none | free, on-box; RAM-aware (one-model cap) |
+| local | `hermes -p jarvis-voice -z … --yolo` subprocess | none | free, on-box; shares the router's single resident model |
 | cloud | `hermes -p default -z … --yolo --ignore-rules` | default profile creds (openrouter) | direct model call, bypass its delegate-everything routing |
 | codex | `codex-task.sh run …` | ChatGPT sub | availability via `status` (exists) |
 | claude | `claude -p "<goal>" --dangerously-skip-permissions` headless | Anthropic sub (~/.claude creds) | full blast radius allowed per Linas — no allowlist |
@@ -21,7 +21,7 @@ switchable at runtime.
   weekly_pct_left, label}, openrouter: {pct_left, usd_used, usd_limit}}` — any field
   null when unknown; `credits.update` event on refresh
 - `task.update` gains `backend` field; NEW `task.partial` event carries streamed
-  intermediate output snippets (codex/claude stdout lines; granite via session poll)
+  intermediate output snippets (codex/claude stdout lines; local via session poll)
 - Actionable-notification derivation: tasks with status `needs_review` (or future
   approval states) → count drives the Tasks-label dot (amber). Running → cyan dot.
 

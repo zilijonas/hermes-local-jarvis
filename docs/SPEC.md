@@ -57,21 +57,21 @@ FSM value drives the cinematic canvas 1:1. Server is authoritative; UI never fak
 2. `capability_search(query: str)` → top capabilities with ids.
 3. `quick_action(action_id: str, args_json: str)` → immediate small action (whitelisted:
    get_time, system_status, open_task_board, say_again, set_volume, list_tasks).
-4. `delegate_task(goal: str, kind: "granite"|"codex", context: str)` → `{task_id, status:"started"}`.
+4. `delegate_task(goal: str, kind: "local"|"codex", context: str)` → `{task_id, status:"started"}`.
 5. `task_status(task_id: str)` (empty id → latest few) → status/progress summaries.
 6. `task_control(task_id: str, action: "pause"|"resume"|"cancel")`.
 Mediator prompt: ≤2k tokens, states that delegate_task only STARTS work; completion is
 announced later via task events, never claimed by the mediator.
 
 ## Worker execution
-- granite: subprocess `hermes -p jarvis-voice -z <goal+context> --yolo -t <toolsets_csv>
+- local: subprocess `hermes -p jarvis-voice -z <goal+context> --yolo -t <toolsets_csv>
   --source tool --usage-file <tmp>`; toolsets chosen by capability router (1-3 sets, ~3-12 tools).
   stdout captured; session id recovered from state.db (latest by source+time) for progress reads.
 - codex: `~/ai/bin/codex-task.sh` conventions (availability gate `status`, one dispatch, no retry loop).
 - Validation before `done`: exit code 0 AND non-empty final text AND no `[error]` markers AND
   artifact checks when the goal names file outputs. Else status `needs_review` with honest summary.
 - Task statuses: `queued|running|paused|canceled|done|failed|needs_review`.
-- Pause/cancel: SIGSTOP/SIGCONT/SIGTERM process group; resume of canceled granite task =
+- Pause/cancel: SIGSTOP/SIGCONT/SIGTERM process group; resume of canceled local task =
   new session with `--resume` when available else fresh with context.
 
 ## DB (jarvis.db)
@@ -89,8 +89,9 @@ median after endpoint · barge-in stop <150 ms · valid meta-tool args ≥98%.
 
 ## Config file service/jarvisd.toml (defaults)
 [server] host=127.0.0.1 port=9140
-[ollama] url=http://127.0.0.1:11434 mediator=gemma4:e4b-it-qat worker=granite4.1-local-64k
-  embed=nomic-embed-text mediator_num_ctx=8192 keep_alive=30m
+[ollama] url=http://127.0.0.1:11434 (embeddings only)
+  mediator=gpt-oss-20b-mxfp4 mediator_url=http://127.0.0.1:8090 mediator_native=true
+  worker=gpt-oss-20b-mxfp4 embed=nomic-embed-text mediator_num_ctx=8192 keep_alive=30m
 [stt] model=base.en compute=int8 device=cpu partial_interval_ms=600
 [vad] aggressiveness=2 endpoint_ms=500 min_speech_ms=200
 [tts] voice=am_michael speed=1.1 engine=kokoro fallback=say

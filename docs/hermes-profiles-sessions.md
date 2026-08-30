@@ -11,7 +11,8 @@
   `parallel_tool_call_guidance: false`; memory guidance gated on `memory` toolset (absent);
   SOUL.md replaced with lean worker identity. Always-injected残: help guidance + profile hint (small).
 - `MINIMUM_CONTEXT_LENGTH = 64_000` (`agent/model_metadata.py:196`) — any Hermes session model
-  must claim ≥64k. granite4.1-local-64k alias provides real 64k (`ollama_num_ctx: 65536`).
+  must claim ≥64k. The router serves `--ctx-size 65536`, so the floor is met at the
+  server; `ollama_num_ctx` was an Ollama-only workaround and is gone.
 - Gateway per profile = separate process + hand-authored LaunchAgent. jarvis-voice runs NO
   platform gateway (no Telegram); only dashboard `--isolated` + jarvisd.
 - `~/.hermes/scripts/ensure-gateways.sh` (LaunchAgent, 300 s) restarts gateways on stale code;
@@ -43,12 +44,13 @@
   if profile has none — ours exists, so safe.
 - LaunchAgent EnvironmentVariables must not include cloud keys.
 
-## Tool-audit facts (2026-07-27, granite prod)
+## Tool-audit facts (2026-07-27, measured on the then-current local model)
 - Prompt bloat is the latency killer: 25 tools/43 kB schemas + 15.7 kB system prompt ≈ 15k tok
   prefill; diet to 15 tools → input 25,995→12,225 tok, warm latency 6-17 s→2-5 s.
 - jarvis-voice worker uses 5 toolsets (file, terminal, web, todo, clarify) minus 15 disabled
   toolsets; typical spawn passes `-t` with 1-3 toolsets → ~4-12 tools.
-- Baselines (this box): granite warm round-trip 0.2-0.4 s (trivial gen); gemma e4b cold load
+- Baselines (this box, superseded 2026-08-30 — kept as the 2026-07-27 record):
+  warm round-trip 0.2-0.4 s (trivial gen); mediator cold load
   6.3 s / warm 0.38 s; profile one-shot cold `hermes -z` 79 s (model swap + prefill), warm 2-5 s.
 
 ## jarvis-voice profile state (as installed)
