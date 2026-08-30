@@ -20,12 +20,12 @@ import { FuelGauge } from "./gauge.js";
 // prototype's BACKENDS table. Live tier/note/gauges come from GET /credits;
 // the tier here is only the pre-fetch fallback.
 export var BACKEND_META = {
-  granite: { name: "Granite", caption: "≈2–6 s · 64k ctx · no spend", sub: "local · free · on-box", tier: "free" },
+  local: { name: "Local", caption: "≈2–6 s · 64k ctx · no spend", sub: "gpt-oss-20b · free · on-box", tier: "free" },
   cloud: { name: "Cloud", caption: "≈1–3 s · $ per call · weekly cap", sub: "cloud · uses limit", tier: "limit" },
   codex: { name: "Codex", caption: "≈4–20 s · coding agent · sub credits", sub: "codex · weekly credits", tier: "sub" },
   claude: { name: "Claude Code", caption: "≈4–20 s · coding agent · weekly + session", sub: "claude · weekly + session", tier: "sub" },
 };
-var BACKEND_ORDER = ["granite", "cloud", "codex", "claude"];
+var BACKEND_ORDER = ["local", "cloud", "codex", "claude"];
 
 export function backendIds(s) {
   var list = s.backends && Array.isArray(s.backends.backends) ? s.backends.backends : BACKEND_ORDER;
@@ -90,7 +90,7 @@ function availDot(available, active) {
 }
 
 // Right side of a row when the backend has no gauges but IS available
-// (granite "on-device · free", codex "PLUS plan · limits not exposed"):
+// (local "on-device · free", codex "PLUS plan · limits not exposed"):
 // the note stacked in two mono lines — first segment highlighted.
 function NoteBlock(props) {
   var note = props.note || "";
@@ -229,7 +229,7 @@ export function BackendSelector(props) {
     [open]
   );
 
-  var activeId = s.worker_backend || (s.backends && s.backends.active) || "granite";
+  var activeId = s.worker_backend || (s.backends && s.backends.active) || "local";
   var meta = metaFor(activeId);
   var cr = creditFor(s, activeId);
   var tier = (cr && cr.tier) || meta.tier;
@@ -303,7 +303,7 @@ export function BackendSelector(props) {
 
 export function BackendChipMobile(props) {
   var s = props.s;
-  var activeId = s.worker_backend || (s.backends && s.backends.active) || "granite";
+  var activeId = s.worker_backend || (s.backends && s.backends.active) || "local";
   var meta = metaFor(activeId);
   var cr = creditFor(s, activeId);
   var tier = (cr && cr.tier) || meta.tier;

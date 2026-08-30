@@ -1180,7 +1180,7 @@ export function App() {
         var seq = (selectBackendSeq += 1);
         store.set({ worker_backend: name });
         var meta = BACKEND_META[name] || { name: name, sub: "" };
-        pushTimeline("backend", "Worker backend set to " + meta.name + (meta.sub ? " · " + meta.sub : ""), null, name === "granite" ? "cyan" : "amber");
+        pushTimeline("backend", "Worker backend set to " + meta.name + (meta.sub ? " · " + meta.sub : ""), null, name === "local" ? "cyan" : "amber");
         authedFetch("/backends", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
