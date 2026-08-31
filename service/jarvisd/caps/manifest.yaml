@@ -49,3 +49,11 @@
   kind: codex
   name: deep research or audit
   keywords: [audit, deep research, analyze repo, investigate, report]
+- id: web.browse
+  kind: local
+  name: open and read a web page in the browser (read-only)
+  # Structured browser_* tools measured 8/8 on read/navigate/extract (2026-08-31,
+  # browser_ab runs 1+2). Interactive flows (forms, multi-step) measured
+  # unreliable — this capability is READ-ONLY by toolset scope on purpose.
+  toolsets: [browser, web]
+  keywords: [open page, read website, browse, look at site, check webpage, page title]
