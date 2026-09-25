@@ -1,13 +1,15 @@
 // sdk.js — thin glue to the host-provided Hermes plugin SDK globals.
 //
-// IMPORTANT: nothing here reads window.__HERMES_PLUGIN_SDK__ / __HERMES_PLUGINS__
-// at module-evaluation time. ESM top-level bodies of every imported module run
-// (in dependency order) before index.js's own top-level presence guard runs, so
-// any eager `var SDK = window.__HERMES_PLUGIN_SDK__` at *module* scope here would
-// risk capturing `undefined` depending on bundler output order. Every accessor
-// below is a plain function, called lazily from inside component render bodies,
-// event handlers, or index.js's mount() — all of which run after the host has
-// already set these globals (index.js's guard confirms that before mounting).
+// This is the plugin-owned half of "data": endpoint base path, session
+// token, the worklet asset URL convention, and the raw fetch/WS helpers that
+// ws.js/audio-in.js/audio-out.js/app.js build on. Visual concerns (React,
+// hooks, components) come from window.HermesUI (see hui.js) — this file
+// never touches those.
+//
+// IMPORTANT: nothing here reads window.__HERMES_PLUGIN_SDK__ at module-
+// evaluation time — every accessor is a plain function called lazily, from
+// inside component render bodies, event handlers, or effects, all of which
+// run after the host has already set these globals.
 //
 // See docs/hermes-plugin-api.md §Frontend SDK for the documented contract.
 
@@ -16,20 +18,6 @@ export var API_BASE = "/api/plugins/jarvis-voice";
 
 export function getSDK() {
   return window.__HERMES_PLUGIN_SDK__;
-}
-
-export function getPlugins() {
-  return window.__HERMES_PLUGINS__;
-}
-
-export function getReact() {
-  var sdk = getSDK();
-  return sdk && sdk.React;
-}
-
-export function getHooks() {
-  var sdk = getSDK();
-  return (sdk && sdk.hooks) || {};
 }
 
 export function sessionToken() {

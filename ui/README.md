@@ -1,19 +1,38 @@
 # jarvis-voice dashboard UI — Jarvis Command Centre
 
-Real frontend for the Jarvis voice assistant Hermes dashboard plugin,
-rebuilt (2026-07-28) to the "Jarvis Command Centre" design prototype in
+Real frontend for the Jarvis voice assistant Hermes dashboard plugin, built
+to the "Jarvis Command Centre" design prototype in
 `../design/Jarvis Command Centre.dc.html` (direction B: anchored core,
-flanked context). Bundled with esbuild into a single IIFE plus two
-standalone AudioWorklet files; consumed by
-`hermes-plugin/dashboard/manifest.json` (`entry`/`css`) and the Hermes
-dashboard host, which injects `window.__HERMES_PLUGIN_SDK__` /
-`window.__HERMES_PLUGINS__` before loading the script (see
-`../docs/hermes-plugin-api.md` §Frontend SDK).
+flanked context).
 
-React is **not bundled** — components are built with a tiny `h()` helper
-(`src/h.js`) bound to `window.__HERMES_PLUGIN_SDK__.React.createElement` at
-runtime. three.js is **gone** (the old WebGL orb was replaced by a 2D-canvas
-intelligence core), which took the main bundle from ~581 KB to ~75 KB raw.
+**2026-09-25: migrated onto Hermes UI (`~/ai/repos/hermes-ui`,
+`window.HermesUI`).** All chrome (system bar, tabs, task cards, notices,
+backend selector, gauges, composer) now comes from the shared library —
+there is no plugin CSS, no Tailwind, no `h.js` and no `dist/style.css`
+anymore. The **File map / Store shape / Mic behavior** sections below
+predate that migration and describe the old per-plugin chrome in detail;
+treat them as historical background on the layout/FSM/audio design, not as
+a description of today's `components/*.js`, which now compose
+`window.HermesUI` components (`Card`, `Badge`, `Tabs`, `NotificationCard`,
+`SpeedGauge`, `Popover`, `Sheet`, `AnimatedList`, `StreamText`, ...) instead
+of hand-rolled Tailwind markup. Still accurate and unchanged: the layout
+breakpoints, the FSM/visualizer design, the WS protocol, and everything in
+§Mic behavior. See `hermes-ui/docs/integration.md` and this repo's
+`tests/test_hermes_ui_parity.py` for the current contract.
+
+Bundled with esbuild into a single IIFE plus two standalone AudioWorklet
+files; consumed by `hermes-plugin/dashboard/manifest.json` (`entry`) and the
+Hermes dashboard host, which injects `window.__HERMES_PLUGIN_SDK__` /
+`window.__HERMES_PLUGINS__` before loading the script (see
+`../docs/hermes-plugin-api.md` §Frontend SDK). `dist/entry.js` (copied
+verbatim from `src/entry.js`, not esbuilt) boots `window.HermesUI` first,
+then loads the esbuild bundle `dist/index.js`.
+
+React is **not bundled** — every component is authored with the `html`
+tagged template (`window.HermesUI.html`, htm bound to the host's
+`React.createElement`); see `src/hui.js`. three.js is **gone** (the old
+WebGL orb was replaced by a 2D-canvas intelligence core, unchanged by this
+migration — see `visualizer/core.js`, kept plugin-specific).
 
 ## Layout (ported from the prototype)
 
@@ -37,40 +56,37 @@ tab body, the conversation log, and sheet bodies.
 
 ```sh
 cd ui
-npm install     # esbuild + tailwindcss/@tailwindcss/cli + postcss (+ React UMD for the harness)
-./build.sh
+./build.sh      # esbuild only — no npm install needed for a normal rebuild
 ```
 
-Output goes to `../hermes-plugin/dashboard/dist/`:
+`build.sh` vendors the shared library first if needed
+(`~/ai/repos/hermes-ui/bin/hui-sync jarvis-voice` — run that explicitly
+after a hermes-ui change; `build.sh` itself does not call it). Output goes
+to `../hermes-plugin/dashboard/dist/`:
 
 | File | What |
 |---|---|
-| `index.js` | IIFE bundle of `src/index.js` and everything it imports. Registers via `window.__HERMES_PLUGINS__.register("jarvis-voice", App)`. |
-| `style.css` | `src/tokens.css` + `src/style.css` (hand layer) + compiled Tailwind utilities (`src/input.css`), all scoped under `#jarvis-voice-root` by `scope-css.mjs`. |
+| `entry.js` | Copy of `src/entry.js` (no esbuild step — a tiny non-module IIFE). Boots `dist/hui/` (`window.HermesUI`), then loads `index.js`. |
+| `index.js` | IIFE bundle of `src/index.js` and everything it imports. Uses `window.HermesUI` for every visual element. Registers via `window.__HERMES_PLUGINS__.register("jarvis-voice", App)`. |
 | `mic-worklet.js` / `player-worklet.js` | AudioWorkletProcessor bundles, loaded at runtime via `audioContext.audioWorklet.addModule(...)`. |
+| `hui/` | Vendored Hermes UI (`hermes-ui.js`, `hermes-ui.css`, `boot.js`, `vendor/echarts/`), copied by `hui-sync`, not by `build.sh`. |
 
-`build.sh` fails the build if (a) the registration call is missing from the
-bundle, (b) **any** selector in the final CSS lacks `#jarvis-voice-root`
-(scope-css.mjs leak check), or (c) any dist bundle fails `node --check`.
+There is no `dist/style.css` and the manifest carries no `"css"` key — all
+chrome comes from `dist/hui/hermes-ui.css`, injected once per page by
+`hui/boot.js`. `build.sh` fails the build if (a) the registration call is
+missing from `index.js`, (b) `entry.js` doesn't call `HermesUIBoot`, or (c)
+any dist bundle fails `node --check`.
 
-### CSS pipeline (Tailwind v4, fully scoped)
+### Styling
 
-`src/input.css` is a CSS-first Tailwind v4 config that deliberately does NOT
-import `tailwindcss`: no preflight (its bare `*`/`html` resets would restyle
-the host dashboard), no default theme (only the `--jv-*` tokens are mapped,
-via `@theme inline`, so utilities compile to `var(--jv-*)` references), no
-cascade layers (unlayered host CSS would beat layered plugin CSS). Only
-`@tailwind utilities;` output is emitted, and `scope-css.mjs` (postcss)
-prefixes every selector with `#jarvis-voice-root`, rewrites any `:root`/
-`:host` to the plugin root, unwraps `@layer`, and then re-parses the result
-to assert zero unscoped selectors. Components use Tailwind utility classes
-(arbitrary values where the prototype's pixel values demand it); the hand
-layer (`src/style.css`) keeps only the neutraliser, root skeleton, mini
-reset, scrollbars, keyframes, focus rings and canvas positioning.
-
-`src/tokens.css` holds the design tokens (colors with AA-contrast notes,
-4px spacing scale, radii 5/9/12, elevation, motion durations + easing),
-scoped under `#jarvis-voice-root` — never `:root`.
+No plugin CSS pipeline anymore (Tailwind, `scope-css.mjs`, `tokens.css`,
+`style.css` and `input.css` are all gone). Components use
+`window.HermesUI` components and tokens (`UI.token("accent")`, the
+`hui-t-*` text-role classes) exclusively. The handful of things that
+genuinely can't be a library component (canvas positioning, the
+currently-spoken highlight span, pseudo-fullscreen, the host padding
+neutraliser) are inline `style` objects or plain DOM writes in
+`app.js`/`components/stage.js`, not a stylesheet.
 
 ## File map (`src/`)
 

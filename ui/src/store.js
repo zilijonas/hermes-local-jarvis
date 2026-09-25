@@ -8,12 +8,10 @@
 // needs. Only the lower-frequency application state that panels/transcript
 // text actually render from lives here.
 //
-// Redesign spec §07 keys (initialised in app.js createStore): worker_backend,
-// backends (GET /backends payload), credits (GET /credits payload),
-// creditsPhase ('idle'|'refreshing'|'ok'|'stale'|'error'), notices[] and the
-// persisted dismissedNotices map — all low-frequency (mount + manual refresh
-// + task/error events only, no polling).
-import { getHooks } from "./sdk.js";
+// Notices[] and the persisted dismissedNotices map live here (WS-driven,
+// low-frequency). Worker backend / subscription credits moved to api.js
+// (UI.useEndpoint-backed) since they are plain HTTP resources, not WS state.
+import { UI } from "./hui.js";
 
 export function createStore(initial) {
   var state = initial;
@@ -39,9 +37,8 @@ export function createStore(initial) {
 }
 
 export function useStore(store) {
-  var hooks = getHooks();
-  var useState = hooks.useState;
-  var useEffect = hooks.useEffect;
+  var useState = UI.useState;
+  var useEffect = UI.useEffect;
   var pair = useState(store.get());
   var value = pair[0];
   var setValue = pair[1];

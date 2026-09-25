@@ -1,33 +1,7 @@
-// components/util.js — tiny shared helpers + the Tailwind class recipes that
-// repeat across panels (status chips, buttons). All class strings are full
-// literals so the Tailwind v4 scanner picks every candidate up.
-
-export function cls() {
-  var out = [];
-  for (var i = 0; i < arguments.length; i++) {
-    if (arguments[i]) out.push(arguments[i]);
-  }
-  return out.join(" ");
-}
-
-// "42s" / "3m 12s" / "1h 4m" — prototype _fmt
-export function fmtDur(sec) {
-  var s = Math.max(0, Math.round(sec));
-  if (s < 60) return s + "s";
-  var m = Math.floor(s / 60);
-  if (m < 60) return m + "m " + (s % 60) + "s";
-  var h = Math.floor(m / 60);
-  return h + "h " + (m % 60) + "m";
-}
-
-export function fmtClock(ts) {
-  var d = new Date(ts || Date.now());
-  return [d.getHours(), d.getMinutes(), d.getSeconds()]
-    .map(function (n) {
-      return String(n).padStart(2, "0");
-    })
-    .join(":");
-}
+// components/util.js — domain helpers that stay in the plugin: jarvisd's
+// task-shape parsing/sorting/dismissal bookkeeping. Formatting (durations,
+// clock time, sparkline points) and chrome (status chips, buttons, tone
+// classes) now come from window.HermesUI (UI.format.*, Badge, Sparkline).
 
 // Defensive timestamp parse — jarvisd rows may carry epoch seconds, epoch
 // milliseconds, or ISO strings; returns ms epoch or null.
@@ -42,75 +16,37 @@ export function parseTs(v) {
   return isNaN(t) ? null : t;
 }
 
-// ---- status chips (prototype _statusStyle, as Tailwind recipes) ------------
-var CHIP_BASE =
-  "inline-flex items-center h-5 px-2 rounded-[4px] border text-[10px] tracking-[.08em] uppercase whitespace-nowrap";
-var CHIP_STYLES = {
-  running: ["border-[rgba(79,227,224,.4)] bg-[rgba(79,227,224,.1)] text-[#9DF0EC]", "running"],
-  queued: ["border-[rgba(120,190,200,.24)] bg-[rgba(120,190,200,.06)] text-dim", "queued"],
-  paused: ["border-[rgba(120,190,200,.24)] bg-[rgba(120,190,200,.06)] text-[#C8DBDE]", "paused"],
-  done: ["border-[rgba(104,234,208,.34)] bg-[rgba(104,234,208,.08)] text-[#8DE8CE]", "done"],
-  needs_review: ["border-[rgba(242,179,92,.42)] bg-[rgba(242,179,92,.1)] text-warn", "needs review"],
-  failed: ["border-[rgba(255,107,107,.42)] bg-[rgba(255,107,107,.1)] text-[#FF8F8F]", "failed"],
-  canceled: ["border-[rgba(120,190,200,.2)] bg-transparent text-micro", "canceled"],
+// status -> {label, tone} for UI.Badge (tone runs through UI's normTone).
+var STATUS_TONE = {
+  running: "accent",
+  queued: "neutral",
+  paused: "neutral",
+  done: "ok",
+  needs_review: "warn",
+  failed: "danger",
+  canceled: "neutral",
 };
-export function statusChip(status) {
-  var m = CHIP_STYLES[status] || ["border-line-strong bg-transparent text-dim", status || "—"];
-  return { className: CHIP_BASE + " " + m[0], label: m[1] };
+export function statusMeta(status) {
+  return { label: (status || "—").replace(/_/g, " "), tone: STATUS_TONE[status] || "neutral" };
 }
 
-// ---- buttons (prototype _btn) ----------------------------------------------
-var BTN_BASE = "h-[26px] px-[11px] rounded-sm text-[11px] cursor-pointer border";
-export var BTN = BTN_BASE + " border-[rgba(120,190,200,.18)] bg-transparent text-[#C8DBDE] hover:brightness-125";
-export var BTN_PRIMARY =
-  BTN_BASE + " border-[rgba(79,227,224,.34)] bg-[rgba(79,227,224,.12)] text-accent-soft font-semibold hover:bg-[rgba(79,227,224,.2)]";
-export var BTN_DANGER = BTN_BASE + " border-[rgba(255,107,107,.3)] bg-transparent text-[#FF8F8F] hover:brightness-125";
-export var BTN_WARN =
-  BTN_BASE + " border-[rgba(242,179,92,.4)] bg-[rgba(242,179,92,.1)] text-warn font-semibold hover:bg-[rgba(242,179,92,.2)]";
-
-// micro section label ("MEMORY", "EVENT TIMELINE", …)
-export var MICRO_LABEL = "text-[9px] tracking-[.16em] text-faint";
-
-// worker identity tag (GRANITE / CODEX)
-export function workerTag(kind) {
-  return {
-    className:
-      "text-[9px] tracking-[.12em] px-[6px] py-[2px] rounded-[3px] border border-[rgba(120,190,200,.2)] " +
-      (kind === "codex" ? "text-[#B9A6E8]" : "text-dim"),
-    label: (kind || "").toUpperCase() || "—",
-  };
+// worker identity tag (GRANITE / CODEX) -> {label, tone}
+export function workerMeta(kind) {
+  return { label: (kind || "").toUpperCase() || "—", tone: kind === "codex" ? "info" : "neutral" };
 }
 
-// activity tone → icon color / row accents (prototype activity mapping)
-export function toneIconClass(tone) {
-  if (tone === "red") return "text-[#FF8F8F]";
-  if (tone === "amber") return "text-warn";
-  if (tone === "cyan") return "text-accent";
-  return "text-faint";
-}
-export function toneRowClass(tone) {
-  if (tone === "red") return "border border-[rgba(255,107,107,.2)] bg-[rgba(14,16,15,.6)]";
-  if (tone === "amber") return "border border-[rgba(242,179,92,.18)] bg-[rgba(14,16,15,.6)]";
-  return "border border-transparent";
-}
-
-// sparkline points for a 100x18 viewBox (prototype _spark)
-export function sparkPoints(arr) {
-  if (!arr || arr.length < 2) return "";
-  var min = Math.min.apply(null, arr);
-  var max = Math.max.apply(null, arr);
-  var sp = max - min || 1;
-  return arr
-    .map(function (v, i) {
-      return ((i / (arr.length - 1)) * 100).toFixed(1) + "," + (16 - ((v - min) / sp) * 14).toFixed(1);
-    })
-    .join(" ");
+// activity/task-event tone -> UI tone name
+export function eventTone(type) {
+  var v = String(type || "").toLowerCase();
+  if (v.indexOf("error") >= 0 || v.indexOf("fail") >= 0) return "danger";
+  if (v.indexOf("review") >= 0 || v.indexOf("cancel") >= 0 || v.indexOf("warn") >= 0 || v.indexOf("restart") >= 0) return "warn";
+  if (v.indexOf("progress") >= 0 || v.indexOf("log") >= 0) return "neutral";
+  return "accent";
 }
 
 // Terminal task states — nothing left to control, only review/clear. Drives
 // BOTH the Dismiss button (work.js) and notice derivation (app.js), so a new
-// terminal status only needs adding here, never per-surface (the old
-// per-surface enumeration is exactly how `canceled` lost its Dismiss).
+// terminal status only needs adding here, never per-surface.
 var TERMINAL_STATUSES = { done: 1, failed: 1, needs_review: 1, canceled: 1 };
 export function isTerminalStatus(status) {
   return !!TERMINAL_STATUSES[status];

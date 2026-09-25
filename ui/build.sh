@@ -2,24 +2,32 @@
 # ui/build.sh — bundle the jarvis-voice dashboard frontend.
 #
 # Produces (consumed by the Hermes dashboard host, see docs/hermes-plugin-api.md):
-#   hermes-plugin/dashboard/dist/index.js          IIFE bundle. Does NOT bundle
-#                                                   React — uses
-#                                                   window.__HERMES_PLUGIN_SDK__.React
-#                                                   at runtime. Registers via
-#                                                   window.__HERMES_PLUGINS__.register("jarvis-voice", ...).
-#   hermes-plugin/dashboard/dist/style.css         tokens.css + hand-written layer
-#                                                   (src/style.css) + Tailwind v4
-#                                                   utilities (src/input.css), all
-#                                                   scoped under #jarvis-voice-root
-#                                                   by scope-css.mjs (build FAILS on
-#                                                   any bare global selector).
-#   hermes-plugin/dashboard/dist/mic-worklet.js    AudioWorkletProcessor, separate file
-#                                                   (loaded via audioWorklet.addModule at runtime).
+#   hermes-plugin/dashboard/dist/entry.js          Copy of src/entry.js (no
+#                                                   esbuild step: a tiny
+#                                                   non-module IIFE with no
+#                                                   imports). Boots
+#                                                   window.HermesUI (vendored
+#                                                   under dist/hui/ by
+#                                                   hermes-ui/bin/hui-sync),
+#                                                   then loads dist/index.js.
+#   hermes-plugin/dashboard/dist/index.js          IIFE bundle of src/index.js
+#                                                   (esbuild — still needed for
+#                                                   the worklet/visualizer/
+#                                                   store module graph). Uses
+#                                                   window.HermesUI for every
+#                                                   visual element; registers
+#                                                   via window.__HERMES_PLUGINS__
+#                                                   .register("jarvis-voice", ...).
+#   hermes-plugin/dashboard/dist/mic-worklet.js    AudioWorkletProcessor, separate
+#                                                   file (audioWorklet.addModule).
 #   hermes-plugin/dashboard/dist/player-worklet.js AudioWorkletProcessor, separate file.
 #
+# No plugin CSS: chrome comes entirely from window.HermesUI's own stylesheet
+# (dist/hui/hermes-ui.css, injected once per page by hui/boot.js). There is
+# no dist/style.css and the manifest carries no "css" key.
+#
 # Usage:
-#   cd ui && npm install    # once — esbuild + tailwindcss/@tailwindcss/cli + postcss
-#   ./build.sh
+#   cd ui && ./build.sh
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -27,28 +35,24 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 # esbuild ships a native Mach-O/ELF binary at node_modules/esbuild/bin/esbuild
 # in current versions (not a Node.js JS shim) — invoke it directly rather than
 # via `node`, which would fail with a "not valid JavaScript" syntax error on
-# the binary. NODE_BIN is used for the Tailwind CLI + scope-css.mjs.
+# the binary. NODE_BIN is used only for the syntax-check step below.
 NODE_BIN="${NODE_BIN:-/opt/homebrew/bin/node}"
 if [ ! -x "$NODE_BIN" ]; then
   NODE_BIN="$(command -v node)"
 fi
 export PATH="$(dirname "$NODE_BIN"):$PATH"
 ESBUILD="./node_modules/esbuild/bin/esbuild"
-TAILWIND="./node_modules/.bin/tailwindcss"
 
 if [ ! -x "$ESBUILD" ]; then
   echo "error: esbuild not found at $ESBUILD — run 'npm install' in ui/ first." >&2
   exit 1
 fi
-if [ ! -x "$TAILWIND" ]; then
-  echo "error: tailwindcss CLI not found at $TAILWIND — run 'npm install' in ui/ first." >&2
-  exit 1
-fi
 
 DIST="../hermes-plugin/dashboard/dist"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$DIST"
+
+echo "-> copying entry.js -> $DIST/entry.js"
+cp src/entry.js "$DIST/entry.js"
 
 echo "-> bundling app -> $DIST/index.js"
 "$ESBUILD" src/index.js \
@@ -72,22 +76,21 @@ echo "-> bundling player-worklet -> $DIST/player-worklet.js"
   --target=es2020 \
   --outfile="$DIST/player-worklet.js"
 
-echo "-> compiling Tailwind utilities (src/input.css)"
-"$TAILWIND" --input src/input.css --output "$TMP/tw.css" --minify
-
-echo "-> assembling stylesheet (tokens + hand layer + utilities)"
-cat src/tokens.css src/style.css "$TMP/tw.css" > "$TMP/style-raw.css"
-
-echo "-> scoping all selectors under #jarvis-voice-root (+ leak check)"
-"$NODE_BIN" scope-css.mjs "$TMP/style-raw.css" "$DIST/style.css"
+echo "-> removing stale style.css (chrome now comes entirely from window.HermesUI)"
+rm -f "$DIST/style.css"
 
 echo "-> verifying registration contract"
 if ! grep -q 'window.__HERMES_PLUGINS__.register("jarvis-voice"' "$DIST/index.js"; then
   echo "FAIL: dist/index.js does not call window.__HERMES_PLUGINS__.register(\"jarvis-voice\", ...)" >&2
   exit 1
 fi
+if ! grep -q 'HermesUIBoot' "$DIST/entry.js"; then
+  echo "FAIL: dist/entry.js does not boot Hermes UI (HermesUIBoot missing)" >&2
+  exit 1
+fi
 
 echo "-> syntax-checking dist bundles"
+"$NODE_BIN" --check "$DIST/entry.js"
 "$NODE_BIN" --check "$DIST/index.js"
 "$NODE_BIN" --check "$DIST/mic-worklet.js"
 "$NODE_BIN" --check "$DIST/player-worklet.js"
