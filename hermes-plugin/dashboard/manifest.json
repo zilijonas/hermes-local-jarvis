@@ -1,9 +1,12 @@
 {
   "name": "jarvis-voice",
-  "label": "Jarvis",
+  "label": "# Jarvis",
   "icon": "Sparkles",
   "version": "0.4.0",
-  "tab": { "path": "/jarvis", "position": "start" },
+  "tab": {
+    "path": "/jarvis",
+    "position": "before:chat"
+  },
   "entry": "dist/entry.js",
   "api": "plugin_api.py"
 }
