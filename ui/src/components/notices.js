@@ -122,7 +122,16 @@ function NoticeGroupCard(props) {
       body=${single ? n.body : undefined}
       time=${single && !mobile ? n.ts : undefined}
       count=${g.items.length}
-      items=${single ? undefined : g.items.map(function (it) { return { id: it.id, label: it.body || it.title }; })}
+      items=${single ? undefined : g.items.map(function (it) {
+        var itemActions = it.approve
+          ? html`
+              <${UI.Row} gap="xs">
+                <${UI.Button} size="sm" variant="primary" loading=${taskControl.pending} onClick=${function () { approve(it); }}>Approve<//>
+                <${UI.Button} size="sm" variant="danger" onClick=${function () { decline(it); }}>Decline<//>
+              <//>`
+          : undefined;
+        return { id: it.id, label: it.body || it.title, actions: itemActions };
+      })}
       actions=${actions}
       onDismiss=${function () { g.items.forEach(dismiss); }}
     />`;

@@ -1005,14 +1005,14 @@ function SystemBar(props) {
       <${UI.Badge} icon="lock" size="sm">LOCAL ONLY<//>
       <${UI.Divider} orientation="vertical" />
       <${UI.Row} align="center" gap="lg" wrap=${false} style=${{ minWidth: 0, overflow: "hidden" }}>
-        ${s.w >= 1280 ? html`<${UI.Stat} size="sm" variant="plain" label="Mediator" value=${(models.mediator && models.mediator.name) || "—"} />` : null}
-        ${s.w >= 1280 ? html`<${UI.Stat} size="sm" variant="plain" label="Worker" value=${(models.worker && models.worker.name) || "—"} />` : null}
+        ${s.w >= 1280 ? html`<${UI.Stat} size="sm" variant="plain" label="Mediator" style=${{ minWidth: 64, flex: "none" }} value=${(models.mediator && models.mediator.name) || "—"} />` : null}
+        ${s.w >= 1280 ? html`<${UI.Stat} size="sm" variant="plain" label="Worker" style=${{ minWidth: 64, flex: "none" }} value=${(models.worker && models.worker.name) || "—"} />` : null}
         ${s.w >= 1024
-          ? html`<${UI.Stat} size="sm" variant="plain" label="E2E first audio"
+          ? html`<${UI.Stat} size="sm" variant="plain" label="E2E first audio" style=${{ minWidth: 64, flex: "none" }}
               value=${s.latency.e2e_first_audio && s.latency.e2e_first_audio.p50}
               format=${function (v) { return (v / 1000).toFixed(2) + " s"; }} />`
           : null}
-        <${UI.Stat} size="sm" variant="plain" label="RAM free" value=${s.health && s.health.ram && s.health.ram.free_gb}
+        <${UI.Stat} size="sm" variant="plain" label="RAM free" style=${{ minWidth: 64, flex: "none" }} value=${s.health && s.health.ram && s.health.ram.free_gb}
           format=${function (v) { return v.toFixed(1) + " GB"; }} />
       <//>
       <div style=${{ flex: 1 }} />
@@ -1025,7 +1025,7 @@ function SystemBar(props) {
                 var cr = credits.backends[id];
                 var g = (cr.gauges || [])[0];
                 var pct = g && typeof g.remaining_pct === "number" ? g.remaining_pct * 100 : 0;
-                return html`<div key=${id} style=${{ width: 84 }}>
+                return html`<div key=${id} style=${{ width: 108, flex: "none" }}>
                   <${UI.Meter} size="sm" label=${BACKEND_META[id].name} value=${pct} max=${100} valueText=${Math.round(pct) + "%"} />
                 </div>`;
               })}

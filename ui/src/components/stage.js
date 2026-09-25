@@ -279,7 +279,9 @@ export function Composer(props) {
               <div ref=${refs.levelRef} style=${{ height: "100%", width: "0%", borderRadius: 2, background: "var(--hui-accent)" }} />
             </div>
             ${s.w > 1100
-              ? html`<span className="hui-t-mono hui-t-micro" style=${{ whiteSpace: "nowrap" }}>SPACE hold · ESC interrupt · 1·2·3 panels</span>`
+              ? html`<span className="hui-t-mono hui-t-micro" style=${{ whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  SPACE hold · ESC interrupt · 1·2·3 panels · <${UI.Kbd} combo="mod+k" /> focus
+                </span>`
               : null}
           <//>
           <${MicBanner} store=${store} s=${s} />

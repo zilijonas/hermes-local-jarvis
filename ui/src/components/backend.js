@@ -92,11 +92,19 @@ function BackendRow(props) {
   if (creditUnavailable) {
     right = html`<${UI.SpeedGauge} label=${meta.name} value="unavailable" sub=${note} small=${mobile} />`;
   } else if (gauges.length) {
-    right = gauges.map(function (g, i) {
+    // Trailing takes exactly one node (List.md: "don't put more than one
+    // item in trailing"); a backend with more than one live quota (e.g.
+    // Claude Code's weekly + session) stacks its gauges vertically in a
+    // single Stack instead of competing side by side for width — the
+    // popover's content column is capped at ~328px (hui-popover max-width
+    // 360 minus padding), too narrow for two 90px+ gauges plus the name/
+    // tier column on one line.
+    var gaugeNodes = gauges.map(function (g, i) {
       return html`<${UI.SpeedGauge} key=${g.label || "g" + i} label=${g.label} remaining=${g.remaining_pct}
         value=${g.value_label} sub=${phase === "stale" ? "stale · refresh" : UI.format.untilTime(g.reset_epoch ? g.reset_epoch * 1000 : null)}
         loading=${phase === "loading" || phase === "refreshing"} small=${mobile} />`;
     });
+    right = gaugeNodes.length > 1 ? html`<${UI.Stack} gap="xs">${gaugeNodes}<//>` : gaugeNodes[0];
   } else if (!cr && (phase === "loading" || phase === "refreshing")) {
     right = html`<${UI.SpeedGauge} label=${meta.name} loading small=${mobile} />`;
   } else {
@@ -186,7 +194,7 @@ export function BackendSelector(props) {
           </span>
           ${tierBadge(tier)}
         </button>`}>
-      ${function (bind) { return html`<div style=${{ width: 380 }}><${Rows} act=${act} onPicked=${bind.close} /></div>`; }}
+      ${function (bind) { return html`<div style=${{ width: 320 }}><${Rows} act=${act} onPicked=${bind.close} /></div>`; }}
     <//>`;
 }
 
