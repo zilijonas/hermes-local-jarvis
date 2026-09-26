@@ -328,7 +328,12 @@ export function WorkToolbar(props) {
       <span className="hui-t-micro">
         ${[notices.length ? UI.format.plural(notices.length, "notification") : null, finished.length ? finished.length + " finished" : null].filter(Boolean).join(" · ")}
       </span>
-      <${UI.Menu} placement="bottom" align="end" items=${items}
-        trigger=${html`<${UI.Button} size="sm" variant="ghost" icon="trash" iconRight="chevron-down">Clear<//>`} />
+      <${UI.Row} gap="xs" align="center" wrap=${false}>
+        ${finished.length ? html`<${UI.Button} size="sm" variant="secondary" icon="check"
+          title="Hide every done, failed or cancelled task"
+          onClick=${function () { clear([], allFinished, UI.format.plural(finished.length, "finished task")); }}>Clear finished (${finished.length})<//>` : null}
+        <${UI.Menu} placement="bottom" align="end" items=${items}
+          trigger=${html`<${UI.IconButton} size="sm" variant="ghost" icon="more-horizontal" label="More clear options" />`} />
+      <//>
     <//>`;
 }
