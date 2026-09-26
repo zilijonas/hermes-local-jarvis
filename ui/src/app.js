@@ -941,6 +941,31 @@ export function App() {
         });
       },
       dismissNotice: dismissNotice,
+      // Bulk clear for the Work tab (notices and/or finished tasks). Local
+      // bookkeeping only, like single dismissals: nothing is sent to jarvisd.
+      // Returns restore() so the caller can offer Undo.
+      clearWork: function (noticeIds, taskIds) {
+        var prev = null;
+        store.set(function (st) {
+          prev = { notices: st.notices, dismissedNotices: st.dismissedNotices, dismissedTasks: st.dismissedTasks };
+          var dn = Object.assign({}, st.dismissedNotices);
+          var now = Date.now();
+          (noticeIds || []).forEach(function (id) { dn[id] = now; });
+          var dt = Object.assign({}, st.dismissedTasks);
+          (taskIds || []).forEach(function (id) { dt[id] = true; });
+          saveLocalJSON(DISMISSED_NOTICES_KEY, dn);
+          saveLocalJSON(DISMISSED_TASKS_KEY, dt);
+          var gone = {};
+          (noticeIds || []).forEach(function (id) { gone[id] = true; });
+          return { dismissedNotices: dn, dismissedTasks: dt, notices: (st.notices || []).filter(function (n) { return !gone[n.id]; }) };
+        });
+        return function restore() {
+          if (!prev) return;
+          saveLocalJSON(DISMISSED_NOTICES_KEY, prev.dismissedNotices || {});
+          saveLocalJSON(DISMISSED_TASKS_KEY, prev.dismissedTasks || {});
+          store.set(prev);
+        };
+      },
       // Approve on a needs_review approval row is handled by the caller
       // (which owns the taskControl re-delegate POST); this just does the
       // dismissal bookkeeping once that resolves (or immediately for Decline).
@@ -996,46 +1021,61 @@ function SystemBar(props) {
   var models = (s.health && s.health.models) || {};
   var connState = s.connection === "open" ? "connected" : s.connection === "connecting" ? "connecting" : s.connection === "reconnecting" ? "reconnecting" : "disconnected";
 
+  // Priority layout from the bar's OWN width (not the plugin's): the right
+  // cluster never moves; stats and credit meters appear only when they fit,
+  // so nothing overlaps on a laptop beside the host sidebar.
+  var barRef = UI.useRef(null);
+  var bw = UI.useElementWidth(barRef) || s.w || 1200;
+  var showRam = bw >= 760, showE2e = bw >= 900, showModels = bw >= 1100, showMeters = bw >= 1560;
+  var e2e = s.latency.e2e_first_audio && s.latency.e2e_first_audio.p50;
+  var ramFree = s.health && s.health.ram ? s.health.ram.free_gb : undefined;
+  var statStyle = { flex: "none", minWidth: 72 };
+  // undefined = not loaded (shimmer); null = no data yet (n/a). Before the
+  // first voice turn there is no latency, so it must be null, not undefined.
+  var healthLoaded = !!s.health;
+  var medName = models.mediator && models.mediator.name, wrkName = models.worker && models.worker.name;
+  var sameModel = !medName || !wrkName || medName === wrkName;
+
   return html`
-    <${UI.Row} align="center" gap="lg" style=${{ flex: "none", height: 52, padding: "0 18px", borderBottom: "1px solid var(--hui-line)", background: "var(--hui-surface)" }} wrap=${false}>
-      <${UI.Row} align="center" gap="sm" wrap=${false}>
+    <div ref=${barRef} style=${{ flex: "none", minHeight: 52, padding: "6px 18px", borderBottom: "1px solid var(--hui-line)", background: "var(--hui-surface)", display: "flex", alignItems: "center", gap: 16, minWidth: 0 }}>
+      <${UI.Row} align="center" gap="sm" wrap=${false} style=${{ flex: "none" }}>
         <span className="hui-dot hui-dot--accent hui-dot--pulse" aria-hidden="true" />
         <span className="hui-t-title">JARVIS</span>
+        ${bw >= 640 ? html`<${UI.Badge} icon="lock" size="sm">Local only<//>` : null}
       <//>
-      <${UI.Badge} icon="lock" size="sm">LOCAL ONLY<//>
-      <${UI.Divider} orientation="vertical" />
-      <${UI.Row} align="center" gap="lg" wrap=${false} style=${{ minWidth: 0, overflow: "hidden" }}>
-        ${s.w >= 1280 ? html`<${UI.Stat} size="sm" variant="plain" label="Mediator" style=${{ minWidth: 64, flex: "none" }} value=${(models.mediator && models.mediator.name) || "—"} />` : null}
-        ${s.w >= 1280 ? html`<${UI.Stat} size="sm" variant="plain" label="Worker" style=${{ minWidth: 64, flex: "none" }} value=${(models.worker && models.worker.name) || "—"} />` : null}
-        ${s.w >= 1024
-          ? html`<${UI.Stat} size="sm" variant="plain" label="E2E first audio" style=${{ minWidth: 64, flex: "none" }}
-              value=${s.latency.e2e_first_audio && s.latency.e2e_first_audio.p50}
-              format=${function (v) { return (v / 1000).toFixed(2) + " s"; }} />`
+      ${showRam ? html`<${UI.Divider} orientation="vertical" />` : null}
+      <div style=${{ display: "flex", alignItems: "center", gap: 20, minWidth: 0, flex: "1 1 auto", overflow: "hidden" }}>
+        ${showModels ? (sameModel
+          ? html`<${UI.Stat} size="sm" variant="plain" label="Model" style=${statStyle} value=${healthLoaded ? medName || null : undefined} />`
+          : html`
+            <${UI.Stat} size="sm" variant="plain" label="Mediator" style=${statStyle} value=${healthLoaded ? medName || null : undefined} />
+            <${UI.Stat} size="sm" variant="plain" label="Worker" style=${statStyle} value=${healthLoaded ? wrkName || null : undefined} />`) : null}
+        ${showE2e ? html`<${UI.Stat} size="sm" variant="plain" label="E2E first audio" style=${statStyle}
+            value=${e2e == null ? "none yet" : e2e} format=${function (v) { return (v / 1000).toFixed(2) + " s"; }} />` : null}
+        ${showRam ? html`<${UI.Stat} size="sm" variant="plain" label="RAM free" style=${statStyle} value=${healthLoaded ? (ramFree == null ? null : ramFree) : undefined}
+            format=${function (v) { return v.toFixed(1) + " GB"; }} />` : null}
+        ${showMeters && credits.backends
+          ? html`<div style=${{ display: "flex", gap: 14, marginLeft: "auto", flex: "none" }}>
+              ${Object.keys(BACKEND_META)
+                .filter(function (id) { var cr = credits.backends[id]; return cr && cr.tier !== "free"; })
+                .map(function (id) {
+                  var cr = credits.backends[id];
+                  var g = (cr.gauges || [])[0];
+                  var pct = g && typeof g.remaining_pct === "number" ? g.remaining_pct * 100 : 0;
+                  return html`<div key=${id} style=${{ width: 124, flex: "none" }}>
+                    <${UI.Meter} size="sm" label=${BACKEND_META[id].name} value=${pct} max=${100} valueText=${Math.round(pct) + "%"} />
+                  </div>`;
+                })}
+            </div>`
           : null}
-        <${UI.Stat} size="sm" variant="plain" label="RAM free" style=${{ minWidth: 64, flex: "none" }} value=${s.health && s.health.ram && s.health.ram.free_gb}
-          format=${function (v) { return v.toFixed(1) + " GB"; }} />
+      </div>
+      <${UI.Row} align="center" gap="sm" wrap=${false} style=${{ flex: "none" }}>
+        <${BackendSelector} act=${act} />
+        <${UI.ConnectionPill} state=${connState} attempt=${s.retryAttempt} />
+        <${FullscreenButton} active=${s.fullscreen || s.pseudoFullscreen} pseudo=${s.pseudoFullscreen} onClick=${act.toggleFullscreen} />
+        <${UI.Switch} checked=${!s.reducedMotion} onChange=${function () { act.toggleReduced(); }} label=${bw >= 980 ? "Motion" : undefined} ariaLabel="Motion" />
       <//>
-      <div style=${{ flex: 1 }} />
-      ${s.w >= 1180 && credits.backends
-        ? html`
-          <${UI.Row} gap="sm" wrap=${false}>
-            ${Object.keys(BACKEND_META)
-              .filter(function (id) { var cr = credits.backends[id]; return cr && cr.tier !== "free"; })
-              .map(function (id) {
-                var cr = credits.backends[id];
-                var g = (cr.gauges || [])[0];
-                var pct = g && typeof g.remaining_pct === "number" ? g.remaining_pct * 100 : 0;
-                return html`<div key=${id} style=${{ width: 108, flex: "none" }}>
-                  <${UI.Meter} size="sm" label=${BACKEND_META[id].name} value=${pct} max=${100} valueText=${Math.round(pct) + "%"} />
-                </div>`;
-              })}
-          <//>`
-        : null}
-      <${BackendSelector} act=${act} />
-      <${UI.ConnectionPill} state=${connState} attempt=${s.retryAttempt} />
-      <${FullscreenButton} active=${s.fullscreen || s.pseudoFullscreen} pseudo=${s.pseudoFullscreen} onClick=${act.toggleFullscreen} />
-      <${UI.Switch} checked=${!s.reducedMotion} onChange=${function () { act.toggleReduced(); }} label="Motion" />
-    <//>`;
+    </div>`;
 }
 
 // Offline: a non-blocking floating notice (voice capture is paused but the

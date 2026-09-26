@@ -149,9 +149,6 @@ export function NoticeRows(props) {
 
   return html`
     <${UI.Stack} gap="sm">
-      <div className="hui-t-micro">
-        ${UI.format.plural(list.length, "notification")}${groups.length < list.length ? " · " + UI.format.plural(groups.length, "group") : ""}
-      </div>
       ${groups.map(function (g) {
         return html`<${NoticeGroupCard} key=${g.key} group=${g} act=${act} mobile=${mobile} />`;
       })}

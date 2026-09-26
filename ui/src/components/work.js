@@ -20,7 +20,7 @@ import {
 } from "./util.js";
 import { useTasks, useTaskDetail, useTaskControl } from "../api.js";
 import { MemoryPanel } from "./memory.js";
-import { NoticeRows, NoticeDot, noticeSummary } from "./notices.js";
+import { NoticeRows, NoticeDot, noticeSummary, visibleNotices } from "./notices.js";
 
 var html = UI.html;
 
@@ -279,6 +279,7 @@ export function WorkColumn(props) {
         <${UI.TabPanel} when="work" value=${tab} idPrefix="jv-work">
           <${UI.ErrorBoundary}>
             <${UI.Stack} gap="sm">
+              <${WorkToolbar} s=${s} act=${act} tasks=${tasks} />
               <${NoticeRows} s=${s} act=${act} />
               <${UI.DataState} state=${tasksEp} empty=${function () { return tasks.length === 0 && !notices.count; }}
                 emptyText="No tasks yet. Delegate something.">
@@ -300,4 +301,34 @@ export function WorkColumn(props) {
         <//>
       <//>
     </div>`;
+}
+
+// Bulk clear row: finished tasks and/or all notices, with Undo.
+var FINISHED = { done: 1, failed: 1, error: 1, cancelled: 1, canceled: 1, completed: 1 };
+export function WorkToolbar(props) {
+  var s = props.s, act = props.act;
+  var notices = visibleNotices(s);
+  var finished = (props.tasks || []).filter(function (t) { return FINISHED[t.status]; });
+  if (!notices.length && !finished.length) return null;
+  function clear(noticeIds, taskIds, what) {
+    var restore = act.clearWork(noticeIds, taskIds);
+    UI.toast.success("Cleared " + what, { action: { label: "Undo", onClick: restore }, duration: 6000 });
+  }
+  var allNotices = notices.map(function (n) { return n.id; });
+  var allFinished = finished.map(function (t) { return t.id; });
+  var items = [];
+  if (finished.length) items.push({ id: "fin", icon: "check", label: "Clear finished tasks (" + finished.length + ")", onSelect: function () { clear([], allFinished, UI.format.plural(finished.length, "finished task")); } });
+  if (notices.length) items.push({ id: "not", icon: "bell", label: "Clear notifications (" + notices.length + ")", onSelect: function () { clear(allNotices, [], UI.format.plural(notices.length, "notification")); } });
+  if (notices.length && finished.length) {
+    items.push({ separator: true });
+    items.push({ id: "all", icon: "trash", danger: true, label: "Clear all", onSelect: function () { clear(allNotices, allFinished, "everything"); } });
+  }
+  return html`
+    <${UI.Row} gap="sm" align="center" justify="between" wrap=${false}>
+      <span className="hui-t-micro">
+        ${[notices.length ? UI.format.plural(notices.length, "notification") : null, finished.length ? finished.length + " finished" : null].filter(Boolean).join(" · ")}
+      </span>
+      <${UI.Menu} placement="bottom" align="end" items=${items}
+        trigger=${html`<${UI.Button} size="sm" variant="ghost" icon="trash" iconRight="chevron-down">Clear<//>`} />
+    <//>`;
 }
