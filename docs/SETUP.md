@@ -3,134 +3,138 @@
 Repo: `/Users/agent/ai/repos/hermes-jarvis-voice`. All commands below assume
 this as cwd unless stated otherwise.
 
+Since 2026-09-28, jarvisd needs no Hermes profile of its own: the plugin is
+a standalone Hermes plugin (`kind: standalone` in `hermes-plugin/plugin.yaml`)
+served directly by the main Hermes dashboard, and jarvisd keeps its own state
+directory rather than a `~/.hermes/profiles/<name>` home. See
+[hermes-profiles-sessions.md](hermes-profiles-sessions.md) for why the old
+profile was removed.
+
 ## Prerequisites
 
-1. **The model router** on `127.0.0.1:8090` (LaunchAgent
-   `local.hermesagent.modelrouter`, script `~/ai/qwen38-bench/scripts/modelrouter.py`)
-   serving **gpt-oss-20b MXFP4** via llama.cpp. This is both the mediator and
-   the worker — one resident copy, so delegating a task cannot evict the model
-   that has to keep talking.
-
-   Hermes enforces `MINIMUM_CONTEXT_LENGTH = 64_000` for any session model. The
-   router satisfies that at the server (`--ctx-size 65536`), so no per-request
-   `num_ctx` alias is needed — that requirement was an Ollama-specific
-   workaround, because Ollama's `/v1` silently ignores `options.num_ctx`.
-
-2. **Ollama** on `127.0.0.1:11434`, for embeddings only:
+1. **The main Hermes dashboard** (`local.hermesagent.dashboard`) already
+   running on `127.0.0.1:9120`, this repo does not install or manage it.
+   `scripts/install.sh` only symlinks the plugin into it.
+2. **The model router** on `127.0.0.1:8090` (LaunchAgent
+   `local.hermesagent.modelrouter`) serving **gpt-oss-20b MXFP4** via
+   llama.cpp. This is the automatic local fallback for both the mediator
+   (config `brain.active`, default `cloud`) and the `delegate_task` worker
+   backend (config `worker.backend`, default `cloud`), and the exclusive
+   engine when either is explicitly switched to `local`. Native tool-calling
+   (`mediator_native = true`) is required for gpt-oss-20b, see
+   `service/jarvisd/mediator/prompt.py`.
+3. **OpenCode Go** reachable at the URL in config `brain.cloud_url`
+   (`https://opencode.ai/zen/go/v1/chat/completions`), the default cloud
+   brain (`deepseek-v4.1-flash`) and, via `hermes -p default -z` (Hermes
+   "codecloud" + jev-router), the default `delegate_task` worker backend.
+   `deep_answer` calls the same account's `minimax-m3`. No local Hermes
+   profile is needed for jarvisd itself, the cloud path shells out to the
+   pre-existing `default` Hermes profile.
+4. **Ollama** on `127.0.0.1:11434`, for embeddings only:
    ```sh
-   ollama pull nomic-embed-text         # memory embeddings, ~0.27 GB
+   ollama pull nomic-embed-text   # memory embeddings, ~0.27 GB
    ```
-3. **kokoro-onnx TTS model files** at `~/ai/models/kokoro/`:
+5. **kokoro-onnx TTS model files** at `~/ai/models/kokoro/`:
    - `kokoro-v1.0.onnx`
    - `voices-v1.0.bin`
-4. **faster-whisper STT** — no manual model file needed; `faster_whisper.WhisperModel("base.en")`
-   downloads its own CTranslate2-format weights on first load. Optional:
-   ggml `.bin` files at `~/ai/models/whisper/` (e.g. `ggml-base.en.bin`) are
-   NOT consumed by the current faster-whisper path (different format,
-   whisper.cpp-only) — keep only if you plan a future whisper.cpp build.
-4. **Python 3.11** on PATH as `python3.11` (used to create `service/.venv`).
-5. **Hermes** installed at `~/.hermes/hermes-agent` (v0.19.0+ verified).
-6. macOS `say` + `ffmpeg` on PATH — used by the TTS fallback path and by
-   `service/tests/test_audio.py`.
+
+   Falls back to macOS `say` if these are missing or fail to load
+   (config `tts.fallback`).
+6. **STT models**:
+   - Parakeet-TDT 0.6B v2 on MLX (`mlx-community/parakeet-tdt-0.6b-v2`,
+     config `stt.parakeet_model`), the default engine (`stt.engine =
+     "parakeet"`). Weights download to the HuggingFace cache on first load
+     (`HF_HUB_OFFLINE=1` is tried first so a warm box never phones home).
+   - faster-whisper `base.en`, automatic fallback if MLX or the Parakeet
+     weights fail to load. Downloads its own CTranslate2 weights on first
+     use.
+7. **Turn-detection models** at `~/ai/models/silero/silero_vad.onnx` and
+   `~/ai/models/smart-turn/smart-turn-v3.2-cpu.onnx` (config `vad.*_model`).
+   If either file is missing, `audio/turn.py` falls back to the older
+   webrtcvad endpointer (`vad.engine = "webrtc"`) so jarvisd never goes deaf.
+8. **Python 3.11** on PATH as `python3.11` (used to create `service/.venv`).
+9. **Hermes** installed at `~/.local/bin/hermes`, used for both
+   `delegate_task` worker backends: `hermes -p default -z ...` (cloud) and
+   `hermes -z ...` with `HERMES_HOME=~/ai/state/jarvis-voice/hermes-home`
+   (local, no `-p`). `codex`/`claude` backends are separate, user-named-only
+   paths (`~/ai/bin/codex-task.sh`, `claude` on PATH).
+10. macOS `say` + `ffmpeg` on PATH, used by the TTS fallback path and by
+    `service/tests/test_audio.py`.
 
 ## Fresh install
 
-### 1. Create the Hermes profile (one-time; already done on this box)
-
-```sh
-hermes profile create jarvis-voice --no-skills
-```
-
-`--no-skills` drops a `.no-bundled-skills` marker in the profile home that
-blocks bundled-skill seeding (including on future `hermes update` syncs).
-Live profile home: `~/.hermes/profiles/jarvis-voice/`.
-
-### 2. Canonical profile config
-
-Lives at `~/.hermes/profiles/jarvis-voice/config.yaml` (not mirrored in this
-repo — treat the live file as source of truth). Key decisions baked in:
-
-- `fallback_providers: []`, no `fallback_model` — main model never falls to
-  cloud on failure.
-- `model.provider: custom`, `base_url: http://127.0.0.1:8090/v1`,
-  `context_length: 65536` — worker is `gpt-oss-20b-mxfp4` via the model router.
-  No `ollama_num_ctx`: llama.cpp fixes context at server start.
-- `auxiliary.*` (vision, web_extract, compression, skills_hub, approval) each
-  pinned to `provider: custom` + explicit router `base_url` — this closes the
-  `provider: auto` → openrouter/nous/local/any-API-key cloud-leak path.
-- `toolsets: [file, terminal, web, todo, clarify]` plus a long
-  `agent.disabled_toolsets` list (session_search, code_execution, vision,
-  video, image_gen, video_gen, x_search, moa, tts, context_engine,
-  messaging, homeassistant, spotify, yuanbao, computer_use) — lean tool
-  surface, cuts prefill for the worker.
-- `agent.reasoning_effort: false` — reasoning is configured once on the llama.cpp
-  server (`--reasoning-effort low`); Hermes only wires this field through for
-  ollama.com/OpenRouter/LM Studio, never for `provider: custom`. Do NOT try to
-  disable reasoning per request: `--reasoning-budget 0` measured 8 points worse
-  on the tool suite (27/29 → 19/29).
-- `plugins.enabled: [jarvis-voice]`.
-- `stt.enabled: true`, `stt.provider: local` (faster-whisper) — this is the
-  dashboard's `/api/audio/transcribe` fallback path, separate from jarvisd's
-  own persistent STT.
-
-### 3. Run the installer
+### 1. Run the installer
 
 ```sh
 scripts/install.sh
 ```
 
-Steps (idempotent, no sudo): back up anything about to be overwritten to
-`~/ai/backups/jarvis-voice-install-<timestamp>.tgz` → symlink
-`~/.hermes/profiles/jarvis-voice/plugins/jarvis-voice` →
-`<repo>/hermes-plugin` → create `service/.venv` (python3.11) + install
-`service/requirements.txt` → install + bootstrap both LaunchAgents → poll
-both health URLs for up to 60 s.
+Steps (idempotent, no sudo):
+1. Back up anything about to be overwritten to
+   `~/ai/backups/jarvis-voice-install-<timestamp>.tgz`.
+2. Create `~/ai/state/jarvis-voice/{logs,hermes-home}` and, only if absent, a
+   minimal `hermes-home/config.yaml` pointing the **local** worker fallback
+   at the model router (`127.0.0.1:8090`, manual approvals, web search on
+   locally, browser off). The **cloud** worker path (default) doesn't need
+   this file at all, it shells out to the separate `default` Hermes
+   profile.
+3. Symlink `~/.hermes/plugins/jarvis-voice` to `<repo>/hermes-plugin`.
+4. Create `service/.venv` (python3.11) + install `service/requirements.txt`.
+5. Install + bootstrap the `local.jarvis.jarvisd` LaunchAgent.
+6. Poll `http://127.0.0.1:9140/health` for up to 60 s.
 
 `service/jarvisd/app.py` may not exist yet on a very fresh checkout (built
-in parallel) — a health-wait timeout on first run is expected, not a bug;
-re-run `scripts/install.sh` once the service code is present.
+in parallel), a health-wait timeout on first run is expected, not a bug.
+Re-run `scripts/install.sh` once the service code is present.
 
-### 4. Verification checklist
+### 2. Verification checklist
 
 ```sh
 # jarvisd health
 curl -s 127.0.0.1:9140/health
 # expect: {"ok":true, "components":{"stt":{"ok":true,...},"tts":{"ok":true,...},
-#          "mediator":{"ok":true,...},"ollama":{"ok":true,...},"db":{"ok":true,...}}, ...}
+# "mediator":{"ok":true,...},"ollama":{"ok":true,...},"db":{"ok":true,...},
+# "turns":{"ok":true,...}}, "models":{...}, "ram":{...}}
 
-# dashboard plugin list (this is what scripts/status.sh actually polls as
-# the dashboard's "health" — there is no separate /health on the dashboard)
-curl -s 127.0.0.1:9131/api/dashboard/plugins | head -c 300
+# dashboard plugin list (needs the browser's session token for most
+# /api/dashboard/* routes - a bare curl may get {"detail":"Unauthorized"}.
+# see docs/TROUBLESHOOTING.md)
+curl -s 127.0.0.1:9120/api/dashboard/plugins | grep jarvis-voice
 
 # full mediator turn, no mic (text-in/text-out)
 curl -s -X POST 127.0.0.1:9140/converse -H 'Content-Type: application/json' \
-  -d '{"text":"what time is it"}'
+ -d '{"text":"what time is it"}'
 # expect: {"reply_text":"...", "actions":[...], "turn_id":"..."}
 
 # dashboard tab loads (200)
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9131/jarvis
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9120/jarvis
 ```
 
-Then open `http://127.0.0.1:9131/jarvis` in a browser and grant microphone
-permission when prompted.
+Then open `http://127.0.0.1:9120/jarvis` (or the tailnet https URL) in a
+browser and grant microphone permission when prompted.
 
-### 5. LaunchAgent labels + log paths
+### 3. LaunchAgent + log paths
 
 | Label | plist | stdout | stderr |
 |---|---|---|---|
-| `local.jarvis.jarvisd` | `~/Library/LaunchAgents/local.jarvis.jarvisd.plist` | `~/.hermes/profiles/jarvis-voice/logs/jarvisd.out.log` | `.../jarvisd.err.log` |
-| `local.jarvis.dashboard` | `~/Library/LaunchAgents/local.jarvis.dashboard.plist` | `~/.hermes/profiles/jarvis-voice/logs/dashboard.out.log` | `.../dashboard.err.log` |
+| `local.jarvis.jarvisd` | `~/Library/LaunchAgents/local.jarvis.jarvisd.plist` | `~/ai/state/jarvis-voice/logs/jarvisd.out.log` | `.../jarvisd.err.log` |
 
 jarvisd additionally writes its own application-level rotating log to
-`~/.hermes/profiles/jarvis-voice/logs/jarvisd.log` (2 MB × 3, via Python
-`RotatingFileHandler`) — distinct from the LaunchAgent-captured
+`~/ai/state/jarvis-voice/logs/jarvisd.log` (2 MB × 3, via Python
+`RotatingFileHandler`) - distinct from the LaunchAgent-captured
 `jarvisd.out/err.log` above, which only catch uvicorn access lines and
 anything printed/crashed outside the app's own logger.
 
-Both agents run `KeepAlive` + `RunAtLoad`, scoped to
-`LimitLoadToSessionType: [Aqua, Background]`. Neither carries any cloud API
-key in `EnvironmentVariables` — jarvisd talks only to loopback Ollama, local
-STT/TTS, and the local Obsidian vault.
+The dashboard itself (`local.hermesagent.dashboard`, port 9120) is **not**
+managed by this repo - it's the pre-existing main Hermes dashboard, already
+running for other plugins. `install.sh`/`uninstall.sh` only ever touch the
+`local.jarvis.jarvisd` LaunchAgent and the plugin symlink.
+
+`local.jarvis.jarvisd` runs `KeepAlive` + `RunAtLoad`, scoped to
+`LimitLoadToSessionType: [Aqua, Background]`. No cloud API key is set in the
+plist's `EnvironmentVariables` (only `HERMES_HOME` and `PATH`) - when the
+cloud brain or cloud worker backend needs credentials, the process reads
+them from `~/.hermes/.env` at runtime.
 
 Check current state any time with:
 ```sh

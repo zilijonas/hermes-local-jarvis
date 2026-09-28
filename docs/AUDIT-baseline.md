@@ -1,3 +1,9 @@
+> **Historical (pre 2026-09-28).** The 2026-09-28 overhaul replaced the
+> single-model gpt-oss-20b design below with two mediator brains (cloud
+> default, local fallback), Parakeet STT, Silero+Smart Turn v3.2 turn
+> detection, and removed the `jarvis-voice` Hermes profile entirely, see
+> `ARCHITECTURE.md` for the current design.
+>
 > **Superseded in part (2026-08-30).** This is a dated record; its numbers were
 > true when written. Since then Jarvis runs ONE model — gpt-oss-20b MXFP4 via the
 > llama.cpp model router on `127.0.0.1:8090` — as both mediator and worker. The

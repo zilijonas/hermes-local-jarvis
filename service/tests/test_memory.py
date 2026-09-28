@@ -1,7 +1,7 @@
 """Tests for jarvisd.memory (indexer.py, search.py, cards.py, __init__.py).
 
 Everything runs against a tmp vault + tmp sqlite path — nothing here touches the
-real ~/ai/memory/obsidian-vault or ~/.hermes/profiles/jarvis-voice/jarvis.db.
+real ~/ai/memory/obsidian-vault or ~/ai/state/jarvis-voice/jarvis.db.
 Only one test (marked skipif Ollama is unreachable) makes a real network call.
 """
 from __future__ import annotations
@@ -132,7 +132,7 @@ def _build_vault(root: Path) -> Path:
 
 def _reindex(vault_path: Path, db_path: Path, **kw):
     """jm.reindex(), but hermetic by default: the real ~/.hermes/memories and
-    ~/.hermes/profiles/jarvis-voice/memories must never leak into a tmp-vault
+    ~/ai/state/jarvis-voice/memories must never leak into a tmp-vault
     test's counts. Tests that specifically exercise hermes-memory indexing
     (test_hermes_memory_files_indexed) pass their own tmp paths explicitly.
     """

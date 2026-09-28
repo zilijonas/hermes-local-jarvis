@@ -74,7 +74,7 @@ function TaskDetail(props) {
             ${result
               ? html`<${UI.Stack} gap="sm"><div className="hui-t-micro">RESULT</div><${UI.CodeBlock} maxHeight=${160}>${result}<//><//>`
               : null}
-            <${UI.KeyValue} label="Session" value=${data.session_id || "—"} mono copyable=${!!data.session_id} />
+            <${UI.KeyValue} label="Session" value=${data.session_id || "-"} mono copyable=${!!data.session_id} />
           <//>`;
       }}
     <//>`;
@@ -182,6 +182,27 @@ var LATENCY_STAGES = [
   ["e2e_first_audio", "end-to-end first audio"],
 ];
 
+// Client-derived — jarvisd's /health never reports this; it's whichever
+// output rung audio-out.js's echo-cancellation routing actually landed on
+// (protocol v2 §AEC). Never invented before the first TTS chunk settles it.
+function audioDiagRow(diag) {
+  if (!diag || diag.path === "pending") return null;
+  var label =
+    diag.path === "loopback"
+      ? "Loopback RTCPeerConnection: full AEC reference"
+      : diag.path === "stream-element"
+        ? "Direct <audio> element: AEC reference, no jitter tuning"
+        : "Direct to speakers: no echo-cancellation reference";
+  var ok = diag.path === "loopback" || diag.path === "stream-element";
+  return {
+    id: "echo-cancellation",
+    leading: html`<${UI.StatusDot} tone=${ok ? "accent" : "danger"} />`,
+    title: "Echo cancellation",
+    description: label + (diag.error ? " · " + diag.error : ""),
+    trailing: html`<${UI.Badge} tone=${ok ? "ok" : "danger"} size="sm">${(diag.path || "?").toUpperCase()}<//>`,
+  };
+}
+
 function SystemTab(props) {
   var s = props.s;
   var act = props.act;
@@ -192,22 +213,26 @@ function SystemTab(props) {
   var ram = health.ram || {};
   var freeGb = typeof ram.free_gb === "number" ? ram.free_gb : null;
   var totalGb = typeof ram.total_gb === "number" ? ram.total_gb : null;
+  var diagRow = audioDiagRow(s.audioDiag);
+  var healthItems = names
+    .map(function (name) {
+      var c = components[name] || {};
+      return {
+        id: name,
+        leading: html`<${UI.StatusDot} tone=${c.ok ? "accent" : "danger"} />`,
+        title: name,
+        description: c.detail || "",
+        trailing: html`<${UI.Badge} tone=${c.ok ? "ok" : "danger"} size="sm">${c.ok ? "OK" : "ERR"}<//>`,
+      };
+    })
+    .concat(diagRow ? [diagRow] : []);
 
   return html`
     <${UI.Stack} gap="sm">
       <${UI.Card} title="Component health" padding="sm">
-        ${names.length === 0
-          ? html`<${UI.EmptyState} compact title="Waiting for /health…" />`
-          : html`<${UI.List} dense items=${names.map(function (name) {
-              var c = components[name] || {};
-              return {
-                id: name,
-                leading: html`<${UI.StatusDot} tone=${c.ok ? "accent" : "danger"} />`,
-                title: name,
-                description: c.detail || "",
-                trailing: html`<${UI.Badge} tone=${c.ok ? "ok" : "danger"} size="sm">${c.ok ? "OK" : "ERR"}<//>`,
-              };
-            })} />`}
+        ${healthItems.length === 0
+          ? html`<${UI.EmptyState} compact title="Waiting for /health" />`
+          : html`<${UI.List} dense items=${healthItems} />`}
       <//>
       <${UI.Card} title="Latency · last 20 turns" padding="sm">
         <${UI.Stack} gap="md">
@@ -219,8 +244,8 @@ function SystemTab(props) {
               <div key=${key}>
                 <${UI.Row} justify="between" align="baseline">
                   <span className="hui-t-sub" style=${{ flex: 1 }}>${stage[1]}</span>
-                  <span className="hui-t-num">${lat && lat.p50 != null ? lat.p50 + " ms" : "—"}</span>
-                  <span className="hui-t-num hui-t-faint">${lat && lat.p95 != null ? lat.p95 + " ms" : "—"}</span>
+                  <span className="hui-t-num">${lat && lat.p50 != null ? lat.p50 + " ms" : "-"}</span>
+                  <span className="hui-t-num hui-t-faint">${lat && lat.p95 != null ? lat.p95 + " ms" : "-"}</span>
                 <//>
                 <${UI.Sparkline} data=${series} height=${18} tone=${key === "e2e_first_audio" ? "accent" : false} />
               </div>`;
@@ -231,14 +256,14 @@ function SystemTab(props) {
         <${UI.Stack} gap="sm">
           <${UI.KVList} items=${["mediator", "worker"].map(function (role) {
             var m = models[role] || {};
-            return { label: role, value: (m.name || role + " —") + (m.resident ? " · resident" : " · on demand") };
+            return { label: role, value: (m.name || role + " -") + (m.resident ? " · resident" : " · on demand") };
           })} />
           <${UI.Meter}
             label="Unified memory"
             value=${freeGb != null && totalGb ? totalGb - freeGb : 0}
             max=${totalGb || 1}
             indeterminate=${freeGb == null || !totalGb}
-            valueText=${freeGb == null ? "—" : freeGb.toFixed(1) + " GB free" + (totalGb ? " / " + totalGb + " GB" : "")} />
+            valueText=${freeGb == null ? "-" : freeGb.toFixed(1) + " GB free" + (totalGb ? " / " + totalGb + " GB" : "")} />
         <//>
       <//>
       <${UI.KpiRow} size="sm" items=${[

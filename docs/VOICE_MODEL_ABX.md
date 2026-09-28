@@ -1,3 +1,9 @@
+> **Historical (pre 2026-09-28).** The single gpt-oss-20b-for-everything
+> design this bake-off settled on was itself superseded on 2026-09-28: the
+> mediator now defaults to a cloud brain (OpenCode Go deepseek-v4.1-flash)
+> with gpt-oss-20b as the automatic local fallback. See `ARCHITECTURE.md`
+> §Brains for the current measured comparison.
+
 # Voice model bake-off — one model for mediator and worker (2026-08-30)
 
 Jarvis ran two models: a Gemma 4 E4B mediator (fast talker, in jarvisd) and a

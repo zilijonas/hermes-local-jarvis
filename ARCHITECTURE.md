@@ -1,87 +1,91 @@
-# Jarvis Voice — Architecture
+# Jarvis Voice: Architecture
 
-Hermes-native local voice assistant on a Mac mini M4 24 GB. Everything runs locally and free;
-no cloud calls anywhere in the runtime path.
+Voice assistant on a Mac mini M4 24 GB, built into the Hermes dashboard. Audio (speech
+recognition, turn detection, speech synthesis) runs on this box. The thinking runs on the
+OpenCode Go subscription by default, with the local model as an automatic fallback.
 
 ```
-                     ┌─────────────────────────── browser (Hermes dashboard, jarvis profile) ─┐
-                     │  Jarvis plugin page (React IIFE via __HERMES_PLUGIN_SDK__)             │
-                     │  • AudioWorklet mic capture → PCM chunks over WS                       │
-                     │  • Cinematic canvas (state machine, audio-reactive)                    │
-                     │  • Activity timeline / task board / memory sources / health            │
-                     └───────────────▲──────────────────────────────▲────────────────────────┘
-                                     │ /api/plugins/jarvis-voice/*  │ WS /api/plugins/jarvis-voice/ws
-                     ┌───────────────┴──────────────────────────────┴────────────────────────┐
-                     │ dashboard server (hermes -p jarvis-voice dashboard --isolated :9131)  │
-                     │   hermes-plugin/dashboard/plugin_api.py — THIN PROXY to jarvisd       │
-                     └───────────────▲────────────────────────────────────────────────────────┘
-                                     │ http/ws 127.0.0.1:9140
-┌────────────────────────────────────┴────────────────────────────────────────────────────────┐
-│ jarvisd — standalone service daemon (own venv, LaunchAgent, survives UI restarts)           │
-│                                                                                              │
-│  audio/    VAD (webrtcvad) + endpointing · STT faster-whisper base.en int8 (persistent)     │
-│            TTS kokoro-onnx (persistent, sentence-streaming) + /usr/bin/say fallback         │
-│  mediator/ Gemma 4 E4B via Ollama /v1 (num_ctx 8192, keep_alive) — tiny prompt (<2k tok)    │
-│            6 meta-tools: memory_recall · capability_search · quick_action · delegate_task   │
-│                          task_status · task_control(pause/resume/cancel)                    │
-│  workers/  Granite: subprocess `hermes -p jarvis-voice -z <goal> -t <3-5 relevant toolsets>`│
-│            Codex/Claude: ~/ai/bin/codex-task.sh (availability-gated, one dispatch/task)     │
-│            task table in jarvis.db (sqlite WAL) — status/progress/results survive restarts  │
-│  memory/   incremental index of Obsidian vault (88 notes) + ~/.hermes/memories              │
-│            sqlite FTS5 + nomic-embed-text vectors (Ollama) · context cards ≤ token budget   │
-│  caps/     capability manifest (tools/skills/actions) — exact + lexical + embedding match   │
-│  events/   WS event bus → UI: state transitions, partial transcripts, TTS amplitude,        │
-│            tool calls, worker progress, memory hits, latency metrics                        │
-└──────────────────────────────────────────────────────────────────────────────────────────────┘
-        │                       │                          │
-   Ollama :11434           state: ~/.hermes/profiles/  Obsidian vault
-   gemma4:e4b-it-qat       jarvis-voice/ (config,      ~/ai/memory/obsidian-vault (read-mostly;
-   granite4.1-local-64k    sessions, state.db,         writes only via reviewed inbox notes)
-   nomic-embed-text        jarvis.db)
+ browser: main Hermes dashboard, tab /jarvis (https://macmini-ai.tail9102ce.ts.net/jarvis)
+   mic: getUserMedia (echoCancellation) to AudioWorklet 16 kHz PCM ──────────+  WS
+   speaker: FIFO player worklet to loopback RTCPeerConnection to <audio>  <───|  /api/plugins/jarvis-voice/ws
+            (so the browser's echo canceller hears Jarvis's own voice)      │  (hermes-plugin/dashboard/plugin_api.py
+   state, live captions, tasks, memory hits, brain + worker selectors       │   is a thin proxy)
+                                                                            ▼
+ jarvisd  127.0.0.1:9140  (LaunchAgent local.jarvis.jarvisd, own venv, state ~/ai/state/jarvis-voice)
+   audio/turn.py   Silero VAD v6 + Smart Turn v3.2: "has the user finished?"   (hands-free)
+   audio/stt.py    Parakeet-TDT 0.6B v2 on MLX (~150 ms), faster-whisper base.en fallback
+   audio/tts.py    kokoro-onnx (voice am_michael), speakable() text cleanup, `say` fallback
+   pipeline.py     turn queue, fragment merging, playback clock, barge-in, announcements
+   mediator/       the conversation loop, 8 meta-tools, two brains:
+                     cloud  OpenCode Go deepseek-v4.1-flash (default)  ─+ automatic per-turn
+                     local  gpt-oss-20b via the model router :8090     ─+ fallback either way
+                   deep_answer to OpenCode Go minimax-m3 for hard questions
+   workers/        delegate_task to background task, one of:
+                     cloud  `hermes -p default -z` = codecloud (Go minimax-m3 + jev-router), the
+                            full Hermes agent: web, browser, mail, cron reminders, files, terminal...
+                     local  `hermes -z` with HERMES_HOME=~/ai/state/jarvis-voice/hermes-home (gpt-oss)
+                     codex / claude  only when the user names them
+   memory/         FTS5 + nomic-embed index of the Obsidian vault and ~/.hermes/memories
+   caps/           capability manifest (hints; toolsets for the local backend)
 ```
 
-## Why the mediator is NOT a Hermes agent session
-Hermes enforces `MINIMUM_CONTEXT_LENGTH = 64_000` (agent/model_metadata.py:196) and injects
-a ≥12k-token system surface even after the July tool-diet. Gemma E4B prefill on that kills the
-≤1.5 s first-spoken-reply target. The mediator therefore runs as a bare chat loop against
-Ollama's OpenAI endpoint with a hand-written <2k-token prompt and exactly 6 flat meta-tool
-schemas. Hermes is still the platform: sessions/tools/state for every real task (Granite via
-Hermes CLI sessions), profile isolation, dashboard UI, STT config, plugin system.
+## Why the mediator is not a Hermes session
+Hermes enforces a 64k minimum context and a ~12k-token system surface. The mediator needs a
+first spoken word in about a second, so it is a bare chat loop with a small prompt and eight
+flat tool schemas (mediator/prompt.py). Real work goes to Hermes through `delegate_task`.
 
-## Voice pipeline (latency budget → ~1.5 s median)
-mic → AudioWorklet 16 kHz PCM frames → WS → jarvisd VAD (webrtcvad, 20 ms frames,
-adaptive endpoint 300–800 ms) → rolling faster-whisper partials (~every 500 ms) + final decode
-(0.3 s) → mediator first sentence (~0.5–0.9 s) → kokoro first chunk (0.26 s) → WS audio out
-→ browser playback with amplitude events.
-Barge-in: VAD speech-start while TTS playing → pause playback <150 ms, cancel mediator stream,
-new turn. Echo rejection: half-duplex gate + output-fingerprint check (drop STT text that
-matches the tail of what Jarvis just spoke) before wake into listening.
+## Brains (measured 2026-09-28, 12-turn quality battery, tests/test_mediator_quality.py)
+| brain | first token | battery |
+|---|---|---|
+| cloud · deepseek-v4.1-flash | 1.3-1.9 s, steady | 12/12 |
+| local · gpt-oss-20b | 1.5-12 s (GPU shared with other local jobs) | 8-10/12 |
+minimax-m3 streams its `<think>` block inside `content`; the mediator strips think spans before
+anything reaches TTS. qwen3.8-flash measured up to 14 s to first word and is not used.
 
-## Ports
-- 9131 dashboard (jarvis-voice isolated instance, loopback)
-- 9140 jarvisd (loopback)
-- 11434 Ollama (existing)
+## Turn taking
+- **Push to talk**: everything between press and release is one utterance. Pauses never split it.
+- **Hands-free**: after 250 ms of silence Smart Turn scores the utterance; "finished" ends the
+  turn, "not finished" keeps listening (`turn.pending` to "go on..." in the UI) up to 1.8 s.
+- **Fragment merge**: if the user speaks again before Jarvis has made a sound and before any
+  side-effect tool ran, the half-answered turn is aborted and both fragments become one turn
+  (`stt.final` with `merged: true`). A follow-up while a turn is still queued merges into it.
+- **Playback clock**: "speaking" lasts until the audio has played, not until synthesis ends.
+  The server sums queued audio, and the client confirms with `playback.end`.
+- **Barge-in**: sustained voice (300 ms) while Jarvis is audible, then a quick decode must give
+  at least two words that are not an echo of what Jarvis is saying. Push-to-talk always barges.
+- **Echo guard**: a transcript close to Jarvis's recent speech is ignored, only while audio
+  plays or within 1.5 s after it.
 
-## RAM plan (24 GB box, ~35 % free baseline)
-gemma e4b @8k ctx ≈ 3.5–4 GB (keep_alive 30m) · granite 64k loads on demand ≈ 5–7 GB ·
-whisper base.en int8 ≈ 0.3 GB · kokoro ≈ 0.5 GB · jarvisd+UI ≈ 0.4 GB.
-Worst case (both LLMs + speech) ≈ 11–12 GB — fits; degraded mode drops granite keep_alive to 0.
+## STT benchmark (2026-09-28, 12 utterances, clean / SNR 10 dB / SNR 3 dB)
+| engine | WER | latency |
+|---|---|---|
+| faster-whisper base.en int8 (old) | 9.7 / 18.7 / 38.8 % | ~420 ms |
+| mlx whisper-large-v3-turbo | 8.2 / 16.4 / 23.1 % | 820-1300 ms |
+| parakeet-tdt-0.6b-v2 (now) | ~11 / 17.9 / 19.4 % | ~150 ms |
+The test voices are macOS `say` voices; real speech favours Parakeet further (Open ASR leaderboard).
 
-## Restart/recovery model
-- jarvisd LaunchAgent (KeepAlive) owns all voice/mediator/worker state via jarvis.db (WAL).
-- Dashboard restart: UI reconnects WS, replays open tasks from /tasks. Worker `hermes -z`
-  subprocesses are jarvisd children; jarvisd restart re-attaches via task table + session ids
-  recorded in state.db (jarvis-voice profile), reconciles orphans on boot.
-- Ollama restart: mediator/STT/TTS retry with backoff; UI shows blocked/error state honestly.
+## Reminders
+`set_reminder(text, in_minutes | at)` is handled by jarvisd itself (reminders.py), not a worker:
+a row in jarvis.db plus a timer. When due it is spoken (queued behind any live turn) and sent to
+the Matrix room `jarvis-voice` through `~/ai/bin/notify`, so it reaches the phone with the tab
+closed. Pending reminders survive restarts, and ones missed while jarvisd was down fire late.
+A worker was tried first and ran `sleep 180` in the foreground plus a hanging Reminders.app
+osascript, so workers are now told never to block and to use the cronjob tool for later work.
 
-## Anti-false-completion
-Worker results are validated: exit code + final-text heuristics + (for file tasks) artifact
-existence checks before a task may transition to `done`. The mediator is prompted to report
-`delegate_task` acceptance as "started", never "done"; only task_status/events flip UI state.
+## Tasks and announcements
+Workers get a preamble: no one is there to answer questions, do the whole task, end with a
+1-3 sentence spoken summary. When a task finishes, `Mediator.report_task` turns the result into a
+short spoken report, which is also shown in the conversation. Cloud tasks that fail for
+infrastructure reasons (429, 5xx, network, quota) retry once on the local backend. Wall-clock cap
+900 s. A task becomes `done` only after validation (exit code, output, claimed files exist).
 
-## Repo → install mapping
-- repo `hermes-plugin/` → symlink `~/.hermes/profiles/jarvis-voice/plugins/jarvis-voice`
-- repo `service/` → run in place via repo venv; LaunchAgent `local.jarvis.jarvisd.plist`
-- dashboard LaunchAgent `local.jarvis.dashboard.plist` (isolated, port 9131)
-- scripts/install.sh · update.sh · uninstall.sh · rollback.sh manage all of the above;
-  backups to ~/ai/backups/ before any overwrite.
+## Ports and state
+- 9140 jarvisd (loopback). The Jarvis tab is served by the main dashboard (9120, tailnet https).
+- `~/ai/state/jarvis-voice/`: `jarvis.db` (turns, tasks, memory index), `logs/`, `hermes-home/`
+  (lean Hermes home for the local worker; not a dashboard profile).
+- Models: `~/ai/models/{kokoro,silero,smart-turn}`, Parakeet in the HuggingFace cache.
+
+## Restart and recovery
+jarvisd owns all state in jarvis.db (WAL). The UI reconnects and replays open tasks. On boot,
+tasks whose worker PID is gone become `needs_review`. `scripts/install.sh` / `update.sh` /
+`uninstall.sh` / `rollback.sh` manage the LaunchAgent and back up to `~/ai/backups/` first.

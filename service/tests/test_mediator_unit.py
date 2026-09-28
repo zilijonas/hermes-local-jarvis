@@ -133,7 +133,7 @@ async def test_native_stream_posts_tool_schemas_to_v1():
     url, body = captured[0]
     assert url.endswith("/v1/chat/completions")          # not /api/chat
     names = [t["function"]["name"] for t in body["tools"]]
-    assert "delegate_task" in names and len(names) == 6
+    assert "delegate_task" in names and "deep_answer" in names and "set_reminder" in names and len(names) == 8
     assert "think" not in body                            # Ollama-only field
     assert out == "Hello."
 

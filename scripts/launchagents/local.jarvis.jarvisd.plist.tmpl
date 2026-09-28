@@ -15,14 +15,17 @@
     <key>WorkingDirectory</key>
     <string>@REPO@/service</string>
 
-    <!-- No cloud API keys here — jarvisd talks only to loopback Ollama,
-         local STT/TTS, and the local Obsidian vault (see ARCHITECTURE.md). -->
+    <!-- No cloud API keys set here — the worker backend default ("cloud") talks
+         to OpenCode Go through the `default` Hermes profile (hermes -p default -z),
+         with a local gpt-oss fallback; any cloud keys it needs are read from
+         ~/.hermes/.env by the process, not embedded in this plist. STT/TTS stay
+         on-box regardless of worker backend (see ARCHITECTURE.md). -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>HERMES_HOME</key>
-        <string>/Users/agent/.hermes/profiles/jarvis-voice</string>
+        <string>/Users/agent/ai/state/jarvis-voice/hermes-home</string>
         <key>PATH</key>
-        <string>/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+        <string>/Users/agent/.local/bin:/Users/agent/ai/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
     <key>LimitLoadToSessionType</key>
@@ -38,9 +41,9 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/agent/.hermes/profiles/jarvis-voice/logs/jarvisd.out.log</string>
+    <string>/Users/agent/ai/state/jarvis-voice/logs/jarvisd.out.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/agent/.hermes/profiles/jarvis-voice/logs/jarvisd.err.log</string>
+    <string>/Users/agent/ai/state/jarvis-voice/logs/jarvisd.err.log</string>
 </dict>
 </plist>

@@ -1,7 +1,10 @@
-# Capability manifest — what Jarvis can do and what each capability needs.
-# kind: quick   → handled instantly inside jarvisd (no LLM worker)
-# kind: local → Hermes worker session; `toolsets` = the ONLY toolsets passed via -t
-# kind: codex   → big delegated job via codex-task.sh
+# Capability manifest: what Jarvis can do and what each capability needs.
+# kind: quick   handled instantly inside jarvisd (no LLM worker)
+# kind: local   delegated task; `toolsets` = the ONLY toolsets the LOCAL backend gets via -t
+#               (the cloud backend always runs the full default-profile toolset)
+# kind: worker  delegated task for the cloud worker (no local toolset diet)
+# hint: passed to the worker as context, so it knows WHICH tools/accounts fit the request.
+# Codex / Claude Code are never chosen from here, only when the user names them.
 # keywords are matched lexically + by embedding; keep them spoken-language flavored.
 
 - id: time.now
@@ -42,13 +45,34 @@
   toolsets: [file, terminal]
   keywords: [script, install, move files, backup, archive, organize]
 - id: code.big
-  kind: codex
+  kind: worker
   name: substantial coding or refactoring job
+  hint: "Work in the named repo under ~/ai/repos; use your coding subagent (delegation) for multi-file changes; run the repo's tests before reporting."
   keywords: [implement, refactor, fix bug, write code, build feature, tests]
 - id: research.big
-  kind: codex
+  kind: worker
   name: deep research or audit
+  hint: "Use web search plus the Obsidian vault (~/ai/memory/obsidian-vault) and give a short spoken conclusion first."
   keywords: [audit, deep research, analyze repo, investigate, report]
+- id: mail.inbox
+  kind: worker
+  name: read, summarize or draft email
+  hint: "Email = the mail_* tools (mail_status, mail_threads, mail_thread, mail_draft_create). Accounts: persoscan (info@persoscan.com) and nimbas (info@nimbas.lt); check both unless one is named. Send only when the task says 'confirmed by user'; otherwise draft."
+  keywords: [email, emails, inbox, mail, unread, reply to, draft, message from]
+- id: web.current
+  kind: worker
+  name: current information from the web (weather, news, prices, opening hours)
+  hint: "Use web search; give the figure with its source and time. Location defaults to Vilnius, Lithuania."
+  keywords: [weather, forecast, news, price, stock, bitcoin, score, open now, latest, today]
+- id: matrix.message
+  kind: worker
+  name: send the user a message or file on their phone (Matrix)
+  hint: "Send with ~/ai/bin/notify --room jarvis-voice \"text\" (or --media <file> \"caption\"). Never call chat APIs directly."
+  keywords: [send me, text me, message me, to my phone, share the link]
+- id: reminders
+  kind: quick
+  name: reminders (set_reminder tool, handled by Jarvis itself)
+  keywords: [remind me, reminder, alarm, timer, "in minutes"]
 - id: web.browse
   kind: local
   name: open and read a web page in the browser (read-only)

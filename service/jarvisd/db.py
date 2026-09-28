@@ -76,6 +76,16 @@ CREATE TABLE IF NOT EXISTS capabilities (
     failures INTEGER NOT NULL DEFAULT 0,
     last_used REAL
 );
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    due REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created REAL NOT NULL,
+    fired REAL
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, due);
 """
 
 
@@ -98,6 +108,27 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        self._conn.commit()
+
+    # ---------------- reminders ----------------
+    def add_reminder(self, rid: str, text: str, due: float) -> dict[str, Any]:
+        self._conn.execute("INSERT INTO reminders (id, text, due, created) VALUES (?, ?, ?, ?)",
+                           (rid, text, due, time.time()))
+        self._conn.commit()
+        return self.get_reminder(rid)
+
+    def get_reminder(self, rid: str) -> dict[str, Any] | None:
+        row = self._conn.execute("SELECT * FROM reminders WHERE id = ?", (rid,)).fetchone()
+        return dict(row) if row else None
+
+    def list_reminders(self, status: str = "pending", limit: int = 20) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM reminders WHERE status = ? ORDER BY due LIMIT ?", (status, limit))
+        return [dict(r) for r in rows.fetchall()]
+
+    def set_reminder_status(self, rid: str, status: str) -> None:
+        self._conn.execute("UPDATE reminders SET status = ?, fired = ? WHERE id = ?",
+                           (status, time.time() if status == "fired" else None, rid))
         self._conn.commit()
 
     def get_conn(self) -> sqlite3.Connection:

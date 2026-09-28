@@ -151,7 +151,7 @@ class CapabilityRouter:
         for score, c in scored[:k]:
             out.append({"id": c["id"], "kind": c["kind"], "name": c["name"],
                         "desc": c.get("desc", ""), "score": round(score, 3),
-                        "toolsets": c.get("toolsets", [])})
+                        "toolsets": c.get("toolsets", []), "hint": c.get("hint", "")})
         return out
 
     def best(self, query: str) -> Optional[dict[str, Any]]:

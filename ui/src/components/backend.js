@@ -17,16 +17,37 @@ import { useBackends, useCredits, useSelectBackend, useRefreshCredits } from "..
 var html = UI.html;
 
 export var BACKEND_META = {
-  local: { name: "Local", caption: "≈2–6 s · 64k ctx · no spend", sub: "gpt-oss-20b · free · on-box", tier: "free" },
-  cloud: { name: "Cloud", caption: "≈1–3 s · $ per call · weekly cap", sub: "cloud · uses limit", tier: "limit" },
-  codex: { name: "Codex", caption: "≈4–20 s · coding agent · sub credits", sub: "codex · weekly credits", tier: "sub" },
-  claude: { name: "Claude Code", caption: "≈4–20 s · coding agent · weekly + session", sub: "claude · weekly + session", tier: "sub" },
+  local: { name: "Local", caption: "≈30-60 s · offline fallback · no spend", sub: "gpt-oss-20b · free · on-box", tier: "free" },
+  cloud: { name: "codecloud", caption: "≈5-30 s · full Hermes agent · OpenCode Go + Jev", sub: "codecloud · subscription", tier: "sub" },
+  codex: { name: "Codex", caption: "≈4-20 s · coding agent · sub credits", sub: "codex · weekly credits", tier: "sub" },
+  claude: { name: "Claude Code", caption: "≈4-20 s · coding agent · weekly + session", sub: "claude · weekly + session", tier: "sub" },
 };
 var BACKEND_ORDER = ["local", "cloud", "codex", "claude"];
-var FOOTNOTE = "Selection applies to delegated tasks and tool calls. Mediator, transcription and speech always stay on-box.";
+var FOOTNOTE = "Applies to delegated tasks. Speech recognition and the voice always stay on this Mac; the brain is picked separately.";
 
 function metaFor(id) {
   return BACKEND_META[id] || { name: id, caption: "", sub: "", tier: "sub" };
+}
+// GET /backends now may carry an optional `labels` map ({id: label}) —
+// prefer it over BACKEND_META's hard-coded names whenever the server sets it
+// (protocol v2), falling back to the static catalog for an older server.
+function nameFor(backends, id) {
+  return (backends && backends.labels && backends.labels[id]) || metaFor(id).name;
+}
+// Short chip tag for the compact header trigger/mobile chip — deliberately
+// derived from the id/BACKEND_META catalog, NOT from nameFor()'s (possibly
+// server-branded, longer) display name: a live server's `labels` override
+// can read e.g. "Hermes codecloud" for id "codecloud", and trimming THAT to
+// its first word would show the wrong half ("Hermes") — metaFor(id).name
+// is either the curated short catalog name ("Local"/"Cloud"/"Codex"/"Claude
+// Code") or, for an id the catalog doesn't know, the bare id itself
+// ("codecloud"), which is already short. Either way this one first-word trim
+// covers every case. The full server label stays in the button's
+// title/aria-label and in full inside the popover/sheet rows (nameFor()).
+function shortTag(id) {
+  var s = metaFor(id).name;
+  var sp = s.indexOf(" ");
+  return sp === -1 ? s : s.slice(0, sp);
 }
 export function backendIds(backends, credits) {
   var list = backends && Array.isArray(backends.backends) ? backends.backends : BACKEND_ORDER;
@@ -47,7 +68,7 @@ function creditsPhase(creditsEp, refreshing) {
   return "ok";
 }
 function creditsAgeLabel(creditsEp, phase) {
-  if (phase === "refreshing") return "checking…";
+  if (phase === "refreshing") return "checking";
   if (phase === "loading") return "";
   if (phase === "error") return "check failed";
   var checked = creditsEp.data && creditsEp.data.checked_epoch;
@@ -59,15 +80,28 @@ function tierBadge(tier) {
   return html`<${UI.Badge} tone=${tier === "free" ? "ok" : "warn"} size="sm">${(tier || "sub").toUpperCase()}<//>`;
 }
 
+// Single tiny inline tag — replaces the old two-line boxed NoteBlock. Full
+// note text stays in the row's title tooltip (see BackendRow).
 function NoteBlock(props) {
   var note = props.note || "";
-  var parts = note.split("·").map(function (x) { return x.trim(); });
-  var line1 = parts[0] || (props.tier === "free" ? "no spend" : (props.tier || "").toUpperCase());
-  var line2 = parts.slice(1).join(" · ");
+  var short = note.split("·")[0].trim() || (props.tier === "free" ? "no spend" : (props.tier || "").toUpperCase());
+  return html`<span className=${"hui-t-mono hui-t-micro" + (props.tier === "free" ? " hui-t-ok" : " hui-t-dim")} style=${{ whiteSpace: "nowrap" }}>${short}</span>`;
+}
+
+// Very small inline meter for one credit gauge: `size="sm"` gives a 5px
+// track, and Meter's own head row (never suppressible via props — it always
+// computes a valueText) already IS the "thin bar + short % text" the compact
+// row needs — so this just feeds it label/valueText directly instead of
+// wrapping a redundant custom label/value pair around it (that duplicated
+// the text once). Never the big SpeedGauge arc; those are too spacious here.
+function CompactGauge(props) {
+  var g = props.gauge;
+  var pct = typeof g.remaining_pct === "number" ? g.remaining_pct * 100 : 0;
+  var tone = typeof g.remaining_pct !== "number" ? "neutral" : pct < 15 ? "danger" : pct < 35 ? "warn" : "accent";
   return html`
-    <div style=${{ textAlign: "center", width: props.mobile ? 88 : 96, flex: "none" }}>
-      <div className=${"hui-t-mono" + (props.tier === "free" ? " hui-t-ok" : " hui-t-dim")} style=${{ fontSize: 11 }}>${line1}</div>
-      ${line2 ? html`<div className="hui-t-mono hui-t-micro" style=${{ fontSize: 9 }}>${line2}</div>` : null}
+    <div style=${{ width: props.mobile ? 100 : 116 }}>
+      <${UI.Meter} size="sm" value=${pct} max=${100} tone=${tone}
+        label=${g.label || null} valueText=${g.value_label || null} indeterminate=${props.loading} />
     </div>`;
 }
 
@@ -88,47 +122,48 @@ function BackendRow(props) {
   var gauges = (cr && cr.gauges) || [];
   var creditUnavailable = !!cr && cr.available === false;
 
+  // Compact trailing: a thin inline meter per gauge (never the big SpeedGauge
+  // arc — see CompactGauge above), stacked with a hairline gap when a
+  // backend carries more than one live quota (e.g. Claude Code's weekly +
+  // session). Loading/unavailable/free-tier all collapse to one small tag.
   var right;
   if (creditUnavailable) {
-    right = html`<${UI.SpeedGauge} label=${meta.name} value="unavailable" sub=${note} small=${mobile} />`;
+    right = html`<span className="hui-t-micro hui-t-dim" style=${{ whiteSpace: "nowrap" }}>unavailable</span>`;
   } else if (gauges.length) {
-    // Trailing takes exactly one node (List.md: "don't put more than one
-    // item in trailing"); a backend with more than one live quota (e.g.
-    // Claude Code's weekly + session) stacks its gauges vertically in a
-    // single Stack instead of competing side by side for width — the
-    // popover's content column is capped at ~328px (hui-popover max-width
-    // 360 minus padding), too narrow for two 90px+ gauges plus the name/
-    // tier column on one line.
     var gaugeNodes = gauges.map(function (g, i) {
-      return html`<${UI.SpeedGauge} key=${g.label || "g" + i} label=${g.label} remaining=${g.remaining_pct}
-        value=${g.value_label} sub=${phase === "stale" ? "stale · refresh" : UI.format.untilTime(g.reset_epoch ? g.reset_epoch * 1000 : null)}
-        loading=${phase === "loading" || phase === "refreshing"} small=${mobile} />`;
+      return html`<${CompactGauge} key=${g.label || "g" + i} gauge=${g} mobile=${mobile} loading=${phase === "loading" || phase === "refreshing"} />`;
     });
-    right = gaugeNodes.length > 1 ? html`<${UI.Stack} gap="xs">${gaugeNodes}<//>` : gaugeNodes[0];
+    right = gaugeNodes.length > 1 ? html`<${UI.Stack} gap="2">${gaugeNodes}<//>` : gaugeNodes[0];
   } else if (!cr && (phase === "loading" || phase === "refreshing")) {
-    right = html`<${UI.SpeedGauge} label=${meta.name} loading small=${mobile} />`;
+    right = html`<${UI.Spinner} size=${12} />`;
   } else {
     right = html`<${NoteBlock} note=${note} tier=${tier} mobile=${mobile} />`;
   }
-  var caption = meta.caption + (note && gauges.length ? " · " + note : "");
+  var displayName = nameFor(backends, id);
+  // Full caption + live note stays in the row's title tooltip; the visible
+  // description line is trimmed to one short clause ("label + tiny detail",
+  // not the whole approx-metrics sentence).
+  var shortCaption = meta.caption.split("·")[0].trim();
+  var fullTitleText = displayName + (meta.caption ? ": " + meta.caption : "") + (note ? " · " + note : "");
   var title = html`
-    <${UI.Row} gap="sm" align="center">
-      <span style=${{ fontWeight: 600 }}>${meta.name}</span>
+    <${UI.Row} gap="xs" align="center" wrap=${false}>
+      <span style=${{ fontWeight: 600 }} title=${fullTitleText}>${displayName}<//>
       ${tierBadge(tier)}
     <//>`;
 
   return html`
     <${UI.ListItem}
+      dense
       leading=${html`<${UI.StatusDot} tone=${active ? "accent" : available ? "neutral" : "danger"} />`}
       title=${title}
-      description=${caption}
+      description=${shortCaption}
       trailing=${right}
       selected=${active}
       style=${{ opacity: available ? 1 : 0.6, cursor: available ? "pointer" : "not-allowed", minHeight: mobile ? 44 : undefined }}
       onClick=${available
         ? function () {
             selectBackend.run(id);
-            act.log("backend", "Worker backend set to " + meta.name + (meta.sub ? " · " + meta.sub : ""), null, id === "local" ? "info" : "warn");
+            act.log("backend", "Worker backend set to " + displayName + (meta.sub ? " · " + meta.sub : ""), null, id === "local" ? "info" : "warn");
             if (props.onPicked) props.onPicked();
           }
         : undefined} />`;
@@ -182,19 +217,18 @@ export function BackendSelector(props) {
   var cr = creditFor(credits, activeId);
   var tier = (cr && cr.tier) || meta.tier;
   var available = !backends.available || backends.available[activeId] !== false;
+  var displayName = nameFor(backends, activeId);
+  var fullLabel = "Worker backend: " + displayName + (meta.sub ? " · " + meta.sub : "");
 
   return html`
     <${UI.Popover} placement="bottom" align="end" panelClassName="jv-backend-pop"
       trigger=${html`
-        <button type="button" className="hui-btn hui-btn--secondary hui-btn--sm" aria-label="Choose worker backend">
+        <button type="button" className="hui-btn hui-btn--secondary hui-btn--sm" aria-label=${fullLabel} title=${fullLabel}>
           <${UI.StatusDot} tone=${available ? "accent" : "danger"} />
-          <span style=${{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.15 }}>
-            <span className="hui-t-micro">BACKEND</span>
-            <span style=${{ fontWeight: 600 }}>${meta.name}</span>
-          </span>
-          ${tierBadge(tier)}
+          <span className="hui-btn__lead"><${UI.Icon} name="cpu" size=${13} /></span>
+          <span className="hui-btn__label">${shortTag(activeId)}</span>
         </button>`}>
-      ${function (bind) { return html`<div style=${{ width: 320 }}><${Rows} act=${act} onPicked=${bind.close} /></div>`; }}
+      ${function (bind) { return html`<div style=${{ width: 260 }}><${Rows} act=${act} onPicked=${bind.close} /></div>`; }}
     <//>`;
 }
 
@@ -207,14 +241,16 @@ export function BackendChipMobile(props) {
   var meta = metaFor(activeId);
   var cr = creditFor(creditsEp.data, activeId);
   var tier = (cr && cr.tier) || meta.tier;
+  var displayName = nameFor(backends, activeId);
+  var fullLabel = "Worker backend: " + displayName + (meta.sub ? " · " + meta.sub : "") + " · " + (tier || "").toUpperCase();
 
   return html`
-    <button type="button" onClick=${props.onClick} aria-label="Worker backend and credits"
+    <button type="button" onClick=${props.onClick} aria-label=${fullLabel} title=${fullLabel}
       className="hui-btn hui-btn--secondary hui-btn--sm"
       style=${props.attention ? { borderColor: "var(--hui-warn)" } : undefined}>
       <${UI.StatusDot} tone="accent" />
-      <span style=${{ fontWeight: 600 }}>${meta.name}</span>
-      ${tierBadge(tier)}
+      <span className="hui-btn__lead"><${UI.Icon} name="cpu" size=${13} /></span>
+      <span className="hui-btn__label">${shortTag(activeId)}</span>
     </button>`;
 }
 

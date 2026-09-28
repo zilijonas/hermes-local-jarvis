@@ -2,15 +2,19 @@
 # jarvis-voice — install (idempotent).
 #
 # 1) back up anything this script is about to overwrite
-# 2) symlink the profile's plugin dir to this repo's hermes-plugin/
-# 3) ensure service/.venv exists with the jarvisd runtime deps installed
-# 4) install + bootstrap both LaunchAgents (jarvisd, dashboard)
-# 5) wait for both to report healthy and print the result
+# 2) ensure the state dir + profile-free worker Hermes home exist
+# 3) symlink ~/.hermes/plugins/jarvis-voice to this repo's hermes-plugin/
+# 4) ensure service/.venv exists with the jarvisd runtime deps installed
+# 5) install + bootstrap the jarvisd LaunchAgent
+# 6) wait for it to report healthy and print the result
+#
+# The Jarvis tab is served by the main Hermes dashboard (local.hermesagent.dashboard,
+# 127.0.0.1:9120/jarvis) — there is no separate isolated dashboard LaunchAgent anymore.
 #
 # Safe to re-run: every step checks current state before acting. No sudo.
 #
 # NOTE: jarvisd's service/jarvisd/app.py may not exist yet (built by a
-# parallel agent) — step 5 (health wait) can legitimately time out on a
+# parallel agent) — step 6 (health wait) can legitimately time out on a
 # fresh checkout. That is expected, not a bug in this script; re-run once
 # the service is in place.
 set -euo pipefail
@@ -24,7 +28,7 @@ jarvis_log "repo root: ${JARVIS_REPO_ROOT}"
 # ---------------------------------------------------------------------------
 # 1) Backup anything install.sh is about to touch — only if it exists.
 # ---------------------------------------------------------------------------
-jarvis_log "step 1/5: backup"
+jarvis_log "step 1/6: backup"
 
 backup_targets=()
 # `-e` alone misses a dangling symlink (broken target); `-L` catches it too.
@@ -35,9 +39,6 @@ if [ -e "$JARVIS_PLUGIN_LINK" ] || [ -L "$JARVIS_PLUGIN_LINK" ]; then
 fi
 if [ -e "${JARVIS_LAUNCHAGENTS_DIR}/${JARVISD_LABEL}.plist" ]; then
   backup_targets+=("${JARVIS_LAUNCHAGENTS_DIR#/}/${JARVISD_LABEL}.plist")
-fi
-if [ -e "${JARVIS_LAUNCHAGENTS_DIR}/${DASHBOARD_LABEL}.plist" ]; then
-  backup_targets+=("${JARVIS_LAUNCHAGENTS_DIR#/}/${DASHBOARD_LABEL}.plist")
 fi
 
 if [ "${#backup_targets[@]}" -eq 0 ]; then
@@ -52,9 +53,60 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2) Symlink profile plugins/jarvis-voice -> repo hermes-plugin/
+# 2) Ensure the state dir + profile-free worker Hermes home exist.
 # ---------------------------------------------------------------------------
-jarvis_log "step 2/5: plugin symlink"
+jarvis_log "step 2/6: state dir + worker home"
+
+mkdir -p "${JARVIS_STATE_DIR}/logs" "${JARVIS_HERMES_HOME}"
+
+# A minimal config.yaml is written ONLY if one isn't already there — this
+# never overwrites a real config, and it never invents secrets. The shape
+# below documents what a first-run worker home needs (local-only model
+# router + STT), matching what was observed in the pre-migration
+# ~/.hermes/profiles/jarvis-voice/config.yaml on 2026-09-28: a local
+# gpt-oss-20b-mxfp4 model via the llama.cpp router (127.0.0.1:8090,
+# api_key: local, no real secret), manual approvals, web search off/local,
+# browser off. Cloud worker routing (the "cloud" default backend talking to
+# OpenCode Go via `hermes -p default -z`) is a jarvisd runtime choice, not
+# something this config file needs to declare — jarvisd shells out to the
+# `default` profile for that, it doesn't run this home in cloud mode.
+if [ ! -f "${JARVIS_HERMES_HOME}/config.yaml" ]; then
+  jarvis_log "writing minimal ${JARVIS_HERMES_HOME}/config.yaml (not present yet)"
+  cat > "${JARVIS_HERMES_HOME}/config.yaml" <<'EOF'
+model:
+  default: gpt-oss-20b-mxfp4
+  provider: custom
+  api_key: local
+  base_url: http://127.0.0.1:8090/v1
+  api_mode: chat_completions
+  context_length: 65536
+  max_tokens: 4096
+  temperature: 0
+stt:
+  enabled: true
+  provider: local
+  local:
+    model: base.en
+    language: en
+approvals:
+  mode: manual
+  timeout: 60
+  cron_mode: deny
+web:
+  backend: ddgs
+  search_backend: web-failover
+  extract_backend: local-extract
+browser:
+  backend: off
+EOF
+else
+  jarvis_log "${JARVIS_HERMES_HOME}/config.yaml already present, leaving as-is"
+fi
+
+# ---------------------------------------------------------------------------
+# 3) Symlink ~/.hermes/plugins/jarvis-voice -> repo hermes-plugin/
+# ---------------------------------------------------------------------------
+jarvis_log "step 3/6: plugin symlink"
 
 mkdir -p "$(dirname "$JARVIS_PLUGIN_LINK")"
 target="${JARVIS_REPO_ROOT}/hermes-plugin"
@@ -79,9 +131,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3) Ensure service/.venv exists with the jarvisd runtime deps installed.
+# 4) Ensure service/.venv exists with the jarvisd runtime deps installed.
 # ---------------------------------------------------------------------------
-jarvis_log "step 3/5: service venv"
+jarvis_log "step 4/6: service venv"
 
 if [ ! -f "$JARVIS_SERVICE_REQUIREMENTS" ]; then
   jarvis_log "writing ${JARVIS_SERVICE_REQUIREMENTS} (not present yet)"
@@ -121,11 +173,11 @@ jarvis_log "installing service deps (pip -q)"
 "${JARVIS_SERVICE_VENV}/bin/pip" install -q -r "$JARVIS_SERVICE_REQUIREMENTS"
 
 # ---------------------------------------------------------------------------
-# 4) Install + bootstrap LaunchAgents.
+# 5) Install + bootstrap the jarvisd LaunchAgent.
 # ---------------------------------------------------------------------------
-jarvis_log "step 4/5: LaunchAgents"
+jarvis_log "step 5/6: LaunchAgent"
 
-mkdir -p "$JARVIS_LAUNCHAGENTS_DIR" "${JARVIS_PROFILE_HOME}/logs"
+mkdir -p "$JARVIS_LAUNCHAGENTS_DIR" "${JARVIS_STATE_DIR}/logs"
 
 install_agent() {
   local label="$1" template="$2"
@@ -136,34 +188,27 @@ install_agent() {
 }
 
 install_agent "$JARVISD_LABEL" "${JARVIS_LAUNCHAGENTS_SRC_DIR}/${JARVISD_LABEL}.plist.tmpl"
-install_agent "$DASHBOARD_LABEL" "${JARVIS_LAUNCHAGENTS_SRC_DIR}/${DASHBOARD_LABEL}.plist.tmpl"
 
 # ---------------------------------------------------------------------------
-# 5) Health wait loop.
+# 6) Health wait loop.
 # ---------------------------------------------------------------------------
-jarvis_log "step 5/5: health wait"
+jarvis_log "step 6/6: health wait"
 
 jarvisd_ok=0
-dashboard_ok=0
 jarvis_wait_health "$JARVISD_HEALTH_URL" 30 2 && jarvisd_ok=1 || true
-jarvis_wait_health "$DASHBOARD_HEALTH_URL" 30 2 && dashboard_ok=1 || true
 
 echo
 jarvis_log "=== install summary ==="
 if [ "$jarvisd_ok" -eq 1 ]; then
   jarvis_log "jarvisd:    HEALTHY (${JARVISD_HEALTH_URL})"
 else
-  jarvis_log "jarvisd:    NOT HEALTHY (${JARVISD_HEALTH_URL}) — check ${JARVIS_PROFILE_HOME}/logs/jarvisd.err.log"
-fi
-if [ "$dashboard_ok" -eq 1 ]; then
-  jarvis_log "dashboard:  HEALTHY (${DASHBOARD_HEALTH_URL})"
-else
-  jarvis_log "dashboard:  NOT HEALTHY (${DASHBOARD_HEALTH_URL}) — check ${JARVIS_PROFILE_HOME}/logs/dashboard.err.log"
+  jarvis_log "jarvisd:    NOT HEALTHY (${JARVISD_HEALTH_URL}) — check ${JARVIS_STATE_DIR}/logs/jarvisd.err.log"
 fi
 
-if [ "$jarvisd_ok" -eq 1 ] && [ "$dashboard_ok" -eq 1 ]; then
-  jarvis_log "install complete, both services healthy."
+if [ "$jarvisd_ok" -eq 1 ]; then
+  jarvis_log "install complete, jarvisd healthy."
+  jarvis_log "Jarvis tab: http://127.0.0.1:9120/jarvis (served by local.hermesagent.dashboard)"
 else
-  jarvis_log "install steps complete, but one or more services are not healthy yet."
-  jarvis_log "run scripts/status.sh for details, or tail the logs above."
+  jarvis_log "install steps complete, but jarvisd is not healthy yet."
+  jarvis_log "run scripts/status.sh for details, or tail the log above."
 fi

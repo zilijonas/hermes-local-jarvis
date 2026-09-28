@@ -7,13 +7,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 echo "=== jarvis-voice status ==="
-echo "repo:    ${JARVIS_REPO_ROOT}"
-echo "profile: ${JARVIS_PROFILE_HOME}"
+echo "repo:        ${JARVIS_REPO_ROOT}"
+echo "state dir:   ${JARVIS_STATE_DIR}"
+echo "worker home: ${JARVIS_HERMES_HOME} (HERMES_HOME, no -p)"
+echo "dashboard:   http://127.0.0.1:9120/jarvis (served by local.hermesagent.dashboard)"
 echo
 
 echo "--- LaunchAgents ---"
 jarvis_agent_status_line "$JARVISD_LABEL"
-jarvis_agent_status_line "$DASHBOARD_LABEL"
 echo
 
 echo "--- HTTP health ---"
@@ -21,11 +22,6 @@ if curl -fsS --max-time 3 "$JARVISD_HEALTH_URL" 2>/dev/null; then
   echo
 else
   echo "jarvisd:    unreachable (${JARVISD_HEALTH_URL})"
-fi
-if curl -fsS --max-time 3 "$DASHBOARD_HEALTH_URL" 2>/dev/null; then
-  echo
-else
-  echo "dashboard:  unreachable (${DASHBOARD_HEALTH_URL})"
 fi
 echo
 

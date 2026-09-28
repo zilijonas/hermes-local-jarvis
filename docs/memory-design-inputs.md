@@ -1,3 +1,10 @@
+> **Historical (pre 2026-09-28).** Written when jarvisd ran under its own
+> `jarvis-voice` Hermes profile (references to "jarvis worker profile"
+> below are to that, now-removed, profile, see
+> `docs/hermes-profiles-sessions.md`). The FTS5 + nomic-embed memory design
+> itself is current and unchanged. Only the profile-specific details are
+> stale.
+
 # Obsidian vault + memory — audit inputs for the Jarvis memory layer (2026-07-27, read-only)
 
 ## Vault: ~/ai/memory/obsidian-vault

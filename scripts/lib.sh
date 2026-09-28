@@ -18,21 +18,19 @@
 JARVIS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JARVIS_REPO_ROOT="$(cd "$JARVIS_SCRIPT_DIR/.." && pwd)"
 
-JARVIS_PROFILE_NAME="jarvis-voice"
-JARVIS_PROFILE_HOME="/Users/agent/.hermes/profiles/jarvis-voice"
+JARVIS_STATE_DIR="/Users/agent/ai/state/jarvis-voice"
+JARVIS_HERMES_HOME="${JARVIS_STATE_DIR}/hermes-home"
 JARVIS_HERMES_VENV="/Users/agent/.hermes/hermes-agent/venv"
-JARVIS_PLUGIN_LINK="${JARVIS_PROFILE_HOME}/plugins/jarvis-voice"
+JARVIS_PLUGIN_LINK="/Users/agent/.hermes/plugins/jarvis-voice"
 JARVIS_SERVICE_DIR="${JARVIS_REPO_ROOT}/service"
 JARVIS_SERVICE_VENV="${JARVIS_SERVICE_DIR}/.venv"
 JARVIS_SERVICE_REQUIREMENTS="${JARVIS_SERVICE_DIR}/requirements.txt"
 
 JARVISD_LABEL="local.jarvis.jarvisd"
-DASHBOARD_LABEL="local.jarvis.dashboard"
 JARVIS_LAUNCHAGENTS_DIR="/Users/agent/Library/LaunchAgents"
 JARVIS_LAUNCHAGENTS_SRC_DIR="${JARVIS_SCRIPT_DIR}/launchagents"
 
 JARVISD_HEALTH_URL="http://127.0.0.1:9140/health"
-DASHBOARD_HEALTH_URL="http://127.0.0.1:9131/api/dashboard/plugins"
 
 JARVIS_BACKUPS_DIR="/Users/agent/ai/backups"
 

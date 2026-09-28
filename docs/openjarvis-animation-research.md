@@ -1,3 +1,8 @@
+> **Historical (pre 2026-09-28).** Read-only research from 2026-07-28. The
+> UI/visualizer landscape it surveys predates the 2026-09-28 runtime
+> overhaul (STT/turn-detection/brain changes) and the 2026-09-25 Hermes UI
+> migration. Kept as reference, not a description of today's `ui/`.
+
 # OpenJarvis animation/visualization research
 
 Date: 2026-07-28

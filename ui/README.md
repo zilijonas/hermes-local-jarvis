@@ -16,8 +16,10 @@ a description of today's `components/*.js`, which now compose
 `window.HermesUI` components (`Card`, `Badge`, `Tabs`, `NotificationCard`,
 `SpeedGauge`, `Popover`, `Sheet`, `AnimatedList`, `StreamText`, ...) instead
 of hand-rolled Tailwind markup. Still accurate and unchanged: the layout
-breakpoints, the FSM/visualizer design, the WS protocol, and everything in
-§Mic behavior. See `hermes-ui/docs/integration.md` and this repo's
+breakpoints and the FSM/visualizer design. §Mic behavior is unchanged too.
+**The WS protocol is NOT unchanged**: 2026-09-28's turn-taking/STT/TTS
+rework added the v2 events documented in §Protocol assumptions below and in
+`docs/SPEC.md`. See `hermes-ui/docs/integration.md` and this repo's
 `tests/test_hermes_ui_parity.py` for the current contract.
 
 Bundled with esbuild into a single IIFE plus two standalone AudioWorklet
@@ -212,6 +214,14 @@ persisted `dismissedNotices` map). The mobile `sheet` key gained a
 `'backend'` value. Credits/backends are fetched on mount and WS reconnect
 only, plus the manual ⟳ refresh — never polled.
 
+Protocol-v2 keys (2026-09-28): `sttPartialUttId` (utt_id of the current
+partial, for the stale-partial guard above), `turnPending` (`turn.pending`
+hint, cleared by `vad.speech`/`stt.final`), `vadActive` (hands-free
+voice-activity start/stop), `audioDiag` (`{path, error}` from
+`audio-out.js`'s `getDiagnostics()` — which echo-cancellation output route
+is active), `noSpeechHint` (self-clearing "Didn't catch that." composer
+hint on `state {detail:"no speech recognized"}`).
+
 ## Keyboard & accessibility
 
 Space = hold-to-talk (unchanged) · Esc = interrupt (barge_in + hardStop) ·
@@ -229,6 +239,38 @@ Everything listed in the pre-redesign README still holds (`buildWsUrl`
 fallback, `window.HERMES_BASE_PATH`, `GET /tasks` array-or-`{tasks}` shape,
 local `updated_ts` stamping, `mode.set` not persisted). New ones:
 
+- **2026-09-28 protocol v2 events** (server to client, full shapes in
+  `docs/SPEC.md` §WebSocket): `stt.partial`/`stt.final` now carry `utt_id`,
+  a capped list of already-finalized utt_ids (`uttFinalizedRef`, 50 max)
+  lets a stray late `stt.partial` for a finalized utterance be dropped
+  instead of clobbering the live transcript. `stt.final {merged:true}`
+  means the server folded this fragment into the PREVIOUS user turn (they
+  resumed speaking before Jarvis made a sound), so the client replaces that
+  bubble's text (`mergeIntoLastUserTurn`) instead of pushing a new one.
+  `turn.pending {utt_id}` (hands-free only, Smart Turn thinks the user
+  isn't finished) sets a subtle "go on..." hint, cleared by the next
+  `vad.speech` or `stt.final`. `vad.speech {active, utt_id}` drives the
+  "user speaking" visualizer look through a brief pause/breath even when
+  the local mic rms dips. `tts.end {interrupted:true}` means the SERVER
+  detected the barge-in (not the client's own Esc/click), so the client
+  MUST call `audioOut.hardStop()`, or whatever is still queued in the
+  player worklet's FIFO keeps playing for seconds. `brain.changed {brain}`
+  fires when any client (including this one) calls `POST /brains`, and all
+  open clients re-sync via `mergeBrainChanged` (api.js).
+- **`playback.end`** (client to server, protocol v2): sent once
+  `audio-out.js`'s player worklet FIFO has run dry and stayed dry for
+  ~250 ms (`onDrained`), not when synthesis merely finishes. The server
+  uses this for its echo guard / barge-in bookkeeping (its "speaking" state
+  lasts until audio has actually played, not until TTS synthesis ended).
+- **Echo cancellation (browser side)**: TTS playback is routed through a
+  same-page loopback `RTCPeerConnection` into a hidden `<audio>` element so
+  Chrome's `getUserMedia({echoCancellation:true})` can track it as a real
+  media element. A plain AudioWorklet-to-destination path is invisible to
+  Chrome's AEC, which is why hands-free mode could otherwise hear Jarvis's
+  own voice. Falls back automatically (loopback, then plain
+  `<audio>.srcObject`, then raw `audioCtx.destination` with no AEC benefit)
+  if the RTCPeerConnection path is unavailable. `audioOut.getDiagnostics()`
+  (surfaced as `store.audioDiag`, System tab) reports which rung is active.
 - **Spoken-sentence highlight** matches the latest `tts.start` `text`
   against the streamed `mediatorText` with `indexOf`; if the sentence isn't
   in the stream yet, no highlight is shown (never guessed).

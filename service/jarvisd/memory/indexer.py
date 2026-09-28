@@ -127,7 +127,7 @@ def resolve_db_path(db_path: "str | Path | None" = None) -> Path:
             return cfg.path_for("hermes_home") / "jarvis.db"
         except Exception:
             pass
-    return Path("~/.hermes/profiles/jarvis-voice/jarvis.db").expanduser()
+    return Path("~/ai/state/jarvis-voice/jarvis.db").expanduser()
 
 
 def default_hermes_memories_path() -> Path:
@@ -142,7 +142,7 @@ def default_profile_memories_path(profile: str = DEFAULT_PROFILE) -> Path:
             return cfg.path_for("hermes_home") / "memories"
         except Exception:
             pass
-    return Path(f"~/.hermes/profiles/{profile}/memories").expanduser()
+    return Path("~/ai/state/jarvis-voice/memories").expanduser()
 
 
 def resolve_ollama(ollama_url: Optional[str] = None,

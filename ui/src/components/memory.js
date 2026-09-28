@@ -68,13 +68,13 @@ export function MemoryPanel(props) {
         onSearch=${setCommitted}
         debounceMs=${250}
         loading=${searching && search.loading}
-        placeholder="Search vault…"
+        placeholder="Search vault"
         aria-label="Search Obsidian memory" />
       <div className="hui-t-micro">${searching ? "SEARCH RESULTS" : "RECALLED FOR THIS TURN"}</div>
       ${items.length === 0
         ? searching
           ? search.loading
-            ? html`<div className="hui-t-sub">Searching…</div>`
+            ? html`<div className="hui-t-sub">Searching</div>`
             : search.error
               ? html`<${UI.ErrorState} compact title="Search failed" error=${search.error} onRetry=${search.reload} />`
               : html`<div className="hui-t-sub">No matches in the vault.</div>`

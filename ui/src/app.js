@@ -22,8 +22,9 @@ import { MemoryColumn } from "./components/memory.js";
 import { WorkColumn } from "./components/work.js";
 import { MobileShell } from "./components/mobile.js";
 import { BackendSelector, BACKEND_META } from "./components/backend.js";
+import { BrainSelector } from "./components/brain.js";
 import { isTerminalStatus, countOpenTasks } from "./components/util.js";
-import { TASKS_URL, BACKENDS_URL, CREDITS_URL, tasksFromResponse, mergeTaskUpdate, useCredits } from "./api.js";
+import { TASKS_URL, BACKENDS_URL, CREDITS_URL, BRAINS_URL, tasksFromResponse, mergeTaskUpdate, mergeBrainChanged, useCredits, useBackends } from "./api.js";
 
 var html = UI.html;
 
@@ -62,8 +63,9 @@ function noticeForTask(task) {
     body:
       task.result_summary ||
       task.progress_note ||
-      (task.status === "needs_review" ? "Waiting for your review — approve to re-delegate, or decline." : ""),
-    ts: Date.now(),
+      (task.status === "needs_review" ? "Waiting for your review: approve to re-delegate, or decline." : ""),
+    // The task's own time, not "now": a resync must not stamp old tasks "just now".
+    ts: (task.finished || task.created) ? (task.finished || task.created) * 1000 : Date.now(),
     taskId: task.id,
     // needs_review rows are approval rows: Approve re-delegates, Decline hides
     approve: task.status === "needs_review",
@@ -92,6 +94,33 @@ function loadLocalFloat(key, fallback) {
   } catch (e) {
     return fallback;
   }
+}
+function loadLocalString(key, fallback) {
+  try {
+    var v = window.localStorage.getItem(key);
+    return v === null ? fallback : v;
+  } catch (e) {
+    return fallback;
+  }
+}
+function saveLocalString(key, v) {
+  try {
+    window.localStorage.setItem(key, v);
+  } catch (e) {
+    /* localStorage unavailable (private mode etc) — setting just won't persist */
+  }
+}
+// Small capped-array "seen" set for stt.final utt_ids — lets a stray, late
+// stt.partial for an utterance that already finalized be dropped instead of
+// clobbering the transcript with stale text (protocol v2; see onEvent).
+var UTT_FINALIZED_CAP = 50;
+function rememberFinalizedUtt(ref, uttId) {
+  var list = ref.current;
+  list.push(uttId);
+  if (list.length > UTT_FINALIZED_CAP) list.splice(0, list.length - UTT_FINALIZED_CAP);
+}
+function isUttFinalized(ref, uttId) {
+  return ref.current.indexOf(uttId) !== -1;
 }
 // Used for dismissedTasks: {taskId: statusAtDismissTime} — a plain array
 // couldn't carry the "what status was it when the user hid it" bit that lets
@@ -179,13 +208,13 @@ function toggleFullscreen(store) {
     var req = root.requestFullscreen ? root.requestFullscreen() : root.webkitRequestFullscreen();
     if (req && typeof req.catch === "function") {
       req.catch(function () {
-        console.info("[jarvis-voice] requestFullscreen() was rejected — falling back to pseudo-fullscreen.");
+        console.info("[jarvis-voice] requestFullscreen() was rejected: falling back to pseudo-fullscreen.");
         if (store) store.set({ pseudoFullscreen: true });
       });
     }
     return;
   }
-  console.info("[jarvis-voice] Fullscreen API unavailable on this browser (likely iOS Safari) — using pseudo-fullscreen instead.");
+  console.info("[jarvis-voice] Fullscreen API unavailable on this browser (likely iOS Safari): using pseudo-fullscreen instead.");
   if (store) store.set({ pseudoFullscreen: true });
 }
 
@@ -204,11 +233,21 @@ export function App() {
       fsmState: "idle",
       fsmDetail: null,
       sttPartial: "",
+      sttPartialUttId: null,
       sttFinal: "",
       mediatorText: "",
       ttsPlaying: false,
       micActive: false,
-      micMode: "ptt",
+      micMode: loadLocalString("jarvis-voice:micMode", "ptt"),
+      // turn.pending: user paused but a server-side turn-detector thinks
+      // they're not finished — shown as a subtle hint until vad.speech or
+      // stt.final (protocol v2). vadActive: hands-free voice-activity start/
+      // stop, drives the "user speaking" look even between local rms dips.
+      turnPending: false,
+      vadActive: false,
+      // { path, error } from audio-out.js's getDiagnostics() — which echo-
+      // cancellation output route is actually active (protocol v2 §AEC).
+      audioDiag: null,
       // no stored preference -> follow the OS-level reduced-motion setting
       reducedMotion: loadLocalBool(
         "jarvis-voice:reducedMotion",
@@ -278,6 +317,9 @@ export function App() {
   // store so it can't re-render the tree; copied in when going offline.
   var lastEventTsRef = UI.useRef(0);
   var noSpeechTimerRef = UI.useRef(null);
+  // capped list of stt.final utt_ids already committed — lets a late,
+  // stale stt.partial for that utterance be dropped (protocol v2).
+  var uttFinalizedRef = UI.useRef([]);
 
   function pushTimeline(type, label, detail, tone) {
     store.set(function (st) {
@@ -299,6 +341,30 @@ export function App() {
         turns: pushCapped(
           st.turns,
           { id: role + ":" + Date.now() + ":" + Math.random(), role: role, text: text, time: UI.format.clockTime(Date.now()), meta: meta || [], dim: !!(opts && opts.dim), tone: (opts && opts.tone) || null },
+          TURNS_MAX
+        ),
+      };
+    });
+  }
+
+  // stt.final {merged:true} (protocol v2): the server merged a continuation
+  // fragment into the previous utterance — replace that bubble's text
+  // instead of pushing a new one. Falls back to a normal push if there's no
+  // prior user turn to merge into (shouldn't normally happen).
+  function mergeIntoLastUserTurn(text) {
+    store.set(function (st) {
+      var turns = st.turns;
+      for (var i = turns.length - 1; i >= 0; i--) {
+        if (turns[i].role === "user") {
+          var next = turns.slice();
+          next[i] = Object.assign({}, turns[i], { text: text, time: UI.format.clockTime(Date.now()) });
+          return { turns: next };
+        }
+      }
+      return {
+        turns: pushCapped(
+          turns,
+          { id: "user:" + Date.now() + ":" + Math.random(), role: "user", text: text, time: UI.format.clockTime(Date.now()), meta: [], dim: false, tone: null },
           TURNS_MAX
         ),
       };
@@ -409,7 +475,8 @@ export function App() {
         UI.mutate(TASKS_URL, data);
         var map = tasksFromResponse(data);
         Object.values(map).forEach(function (t) {
-          if (t.status === "needs_review") pushNotice(noticeForTask(t));
+          // Only recent reviews come back as notices; week-old ones stay in the Work list.
+          if (t.status === "needs_review" && (!t.finished || Date.now() / 1000 - t.finished < 86400)) pushNotice(noticeForTask(t));
         });
         if (announce) {
           var open = countOpenTasks(map);
@@ -428,6 +495,7 @@ export function App() {
       });
     UI.invalidate(BACKENDS_URL);
     UI.invalidate(CREDITS_URL);
+    UI.invalidate(BRAINS_URL);
   }
 
   // ---- mount once: ws, audio, mic, keyboard, timers -----------------------
@@ -435,6 +503,16 @@ export function App() {
     var audioOut = createAudioOutput();
     audioOut.setGain(store.get().volume);
     audioOutRef.current = audioOut;
+
+    // playback.end (protocol v2): tell the server once the player has
+    // genuinely finished making sound (worklet FIFO ran dry and stayed dry
+    // for ~250ms — see audio-out.js's onDrained). The server uses this for
+    // its echo guard / barge-in bookkeeping.
+    var unsubscribeDrained = audioOut.onDrained(function () {
+      var socket = wsRef.current;
+      if (socket) socket.send({ t: "playback.end", turn_id: store.get().turnId });
+      pushTimeline("playback.end", "Playback drained: echo guard released", null, "neutral");
+    });
 
     // Client-side "is the mic actually producing signal" bookkeeping. Plain
     // closure vars — high-frequency signals never touch the store.
@@ -450,7 +528,12 @@ export function App() {
       },
       onLevel: function (rms) {
         var on = store.get().micActive;
-        var v = on ? rms : 0;
+        // vad.speech {active:true} (protocol v2, hands-free mode): the
+        // server's own voice-activity detector says the user is still
+        // speaking even through a local rms dip (a breath, a pause) — floor
+        // the visualizer/ring level so the "user speaking" look doesn't
+        // flicker off mid-utterance.
+        var v = on ? Math.max(rms, store.get().vadActive ? 0.4 : 0) : 0;
         lastMicRms = rms;
         if (visRef.current) visRef.current.onMicLevel(v);
         ringLevel += (Math.min(1, v) - ringLevel) * 0.35;
@@ -474,7 +557,7 @@ export function App() {
       silenceCheckTimer = setTimeout(function () {
         if (!store.get().micActive) return;
         if (mic.getChunkCount() > 0 && lastMicRms < 0.02 && !micHeardActivity) {
-          store.set({ micHint: "Mic level is silent — check input device/permissions." });
+          store.set({ micHint: "Mic level is silent: check input device/permissions." });
         }
       }, 2000);
     }
@@ -494,7 +577,7 @@ export function App() {
           store.set({ fsmState: msg.value, fsmDetail: msg.detail || null });
           pushTimeline(
             "state",
-            humanState(msg.value) + (msg.detail ? " — " + msg.detail : ""),
+            humanState(msg.value) + (msg.detail ? ": " + msg.detail : ""),
             null,
             msg.value === "error" ? "danger" : msg.value === "blocked" ? "warn" : "neutral"
           );
@@ -510,23 +593,51 @@ export function App() {
           }
           if (msg.value !== "idle" && msg.value !== "listening") micHeardActivity = true;
           break;
-        case "stt.partial":
-          store.set({ sttPartial: msg.text || "" });
+        case "stt.partial": {
+          // protocol v2: a partial can carry utt_id; a partial for an
+          // utterance that already finalized is a stale/late message that
+          // used to cause transcript "chaos" — drop it.
+          var partialUttId = msg.utt_id != null ? msg.utt_id : null;
+          if (partialUttId != null && isUttFinalized(uttFinalizedRef, partialUttId)) break;
+          store.set({ sttPartial: msg.text || "", sttPartialUttId: partialUttId });
           micHeardActivity = true;
           if (store.get().micHint) store.set({ micHint: null });
           break;
-        case "stt.final":
-          store.set({ sttPartial: "", sttFinal: msg.text || "" });
+        }
+        case "stt.final": {
+          var finalUttId = msg.utt_id != null ? msg.utt_id : null;
+          if (finalUttId != null) rememberFinalizedUtt(uttFinalizedRef, finalUttId);
+          store.set({ sttPartial: "", sttPartialUttId: null, sttFinal: msg.text || "", turnPending: false });
           lastUserTextRef.current = msg.text || "";
-          if (msg.text) pushTurn("user", msg.text);
-          pushTimeline("stt.final", "Transcribed: “" + (msg.text || "") + "”", typeof msg.ms === "number" ? "stt.final ms: " + msg.ms : null, "neutral");
+          if (msg.text) {
+            if (msg.merged) mergeIntoLastUserTurn(msg.text);
+            else pushTurn("user", msg.text);
+          }
+          pushTimeline(
+            "stt.final",
+            (msg.merged ? "Merged into previous utterance: " : "Transcribed: ") + "“" + (msg.text || "") + "”",
+            typeof msg.ms === "number" ? "stt.final ms: " + msg.ms : null,
+            "neutral"
+          );
           recordLatency("stt", msg.ms);
           micHeardActivity = true;
           if (store.get().micHint) store.set({ micHint: null });
           break;
+        }
+        case "turn.pending":
+          // A server-side turn-detector thinks the user paused but isn't
+          // done yet — shown as a subtle hint (see stage.js's StateCaption)
+          // until the next vad.speech or stt.final (protocol v2).
+          store.set({ turnPending: true });
+          break;
+        case "vad.speech":
+          // Hands-free user voice start/stop (protocol v2) — drives the
+          // orb/visualizer "user speaking" look via the onLevel floor above.
+          store.set({ vadActive: !!msg.active, turnPending: false });
+          break;
         case "stt.ignored":
           if (msg.text) {
-            pushTurn("user", msg.text, ["ignored — " + (msg.reason || "echo")], { dim: true });
+            pushTurn("user", msg.text, ["ignored: " + (msg.reason || "echo")], { dim: true });
           }
           pushTimeline("stt.ignored", "Ignored: “" + (msg.text || "") + "” (" + (msg.reason || "echo") + ")", detailString(msg), "warn");
           micHeardActivity = true;
@@ -555,14 +666,16 @@ export function App() {
           }
           pushTimeline(
             "meta_tool",
-            msg.name + (msg.phase === "end" ? (msg.result_summary ? " → " + msg.result_summary : " finished") : " started"),
+            msg.name + (msg.phase === "end" ? (msg.result_summary ? ": " + msg.result_summary : " finished") : " started"),
             detailString({ args: msg.args, ms: msg.ms }),
             "accent"
           );
           break;
         case "tts.start":
           if (!store.get().ttsPlaying) {
-            pushTimeline("tts.start", "TTS started · kokoro-onnx", null, "neutral");
+            // Never hard-code an engine name here — the server may run any
+            // TTS backend; only report one if it actually tells us.
+            pushTimeline("tts.start", msg.engine ? "TTS started · " + msg.engine : "TTS started", null, "neutral");
           }
           store.set({ ttsPlaying: true, speakingText: msg.text || "" });
           break;
@@ -575,6 +688,17 @@ export function App() {
         case "tts.end":
           store.set({ ttsPlaying: false, speakingText: "" });
           recordLatency("tts_first_chunk", msg.ms_first_chunk);
+          if (audioOutRef.current) store.set({ audioDiag: audioOutRef.current.getDiagnostics() });
+          if (msg.interrupted) {
+            // The SERVER detected the barge-in (as opposed to our own local
+            // interrupt()/Esc) — without this, whatever audio was already
+            // queued in the worklet's FIFO would keep playing for seconds.
+            if (audioOutRef.current) audioOutRef.current.hardStop();
+            store.set(function (st) {
+              return { bargeIns: st.bargeIns + 1 };
+            });
+            pushTimeline("tts.end", "Server detected barge-in: playback stopped", null, "warn");
+          }
           break;
         case "task.update": {
           var merged = mergeTaskUpdate(msg);
@@ -589,7 +713,7 @@ export function App() {
           });
           pushTimeline(
             "task.update",
-            (msg.title || msg.id) + " → " + msg.status,
+            (msg.title || msg.id) + ": " + msg.status,
             detailString({ progress_note: msg.progress_note, result_summary: msg.result_summary }),
             msg.status === "failed" ? "danger" : msg.status === "needs_review" ? "warn" : "accent"
           );
@@ -601,7 +725,7 @@ export function App() {
           store.set({ memoryHits: items });
           if (visRef.current) visRef.current.onMemoryHits(items);
           turnMetaRef.current.push("memory_recall · " + items.length + " hit" + (items.length === 1 ? "" : "s"));
-          pushTimeline("memory.hits", "memory_recall → " + items.length + " hits", detailString(items), "accent");
+          pushTimeline("memory.hits", "memory_recall: " + items.length + " hits", detailString(items), "accent");
           enrichMemoryHits(items);
           break;
         }
@@ -612,15 +736,19 @@ export function App() {
           store.set({ health: msg });
           pushTimeline("health", "Health changed", detailString(msg.components), "warn");
           break;
+        case "brain.changed":
+          mergeBrainChanged(msg);
+          pushTimeline("brain.changed", "Brain switched to " + (msg.brain || "?"), null, "accent");
+          break;
         case "error":
           store.set(function (st) {
             return { errCount: st.errCount + 1 };
           });
           pushTimeline("error", msg.message || "error", detailString(msg), "danger");
-          pushTurn("system", msg.message || "Turn failed — no reply.", [], { tone: "red" });
+          pushTurn("system", msg.message || "Turn failed: no reply.", [], { tone: "red" });
           turnMetaRef.current = [];
           store.set({ mediatorText: "", speakingText: "" });
-          pushNotice({ id: "error:" + Date.now(), tone: "error", title: "Pipeline error", body: msg.message || "Turn failed — see the activity stream.", ts: Date.now(), approve: false });
+          pushNotice({ id: "error:" + Date.now(), tone: "error", title: "Pipeline error", body: msg.message || "Turn failed: see the activity stream.", ts: Date.now(), approve: false });
           break;
         case "pong":
           break;
@@ -663,6 +791,11 @@ export function App() {
 
     function startPtt() {
       if (store.get().micActive) return;
+      // Real user-gesture handler (click or Space) — prime the hidden <audio>
+      // element's autoplay HERE, synchronously in the gesture, not later when
+      // the first TTS chunk actually arrives (autoplay policy, esp. iOS
+      // Safari; see audio-out.js's primeAutoplay()).
+      audioOut.primeAutoplay();
       store.set({ micActive: true }); // immediate visual state, no server round-trip
       if (store.get().ttsPlaying) {
         audioOut.hardStop();
@@ -746,8 +879,10 @@ export function App() {
       clearTimeout(silenceCheckTimer);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      unsubscribeDrained();
       socket.close();
       mic.teardown();
+      audioOut.destroy();
       if (visRef.current) {
         visRef.current.destroy();
         visRef.current = null;
@@ -929,6 +1064,7 @@ export function App() {
       },
       setMicMode: function (mode) {
         store.set({ micMode: mode });
+        saveLocalString("jarvis-voice:micMode", mode);
         if (wsRef.current) wsRef.current.send({ t: "mode.set", mode: mode });
       },
       // Client-side-only "Dismiss" for needs_review/done/failed cards.
@@ -1018,6 +1154,12 @@ function SystemBar(props) {
   var act = props.act;
   var creditsEp = useCredits();
   var credits = creditsEp.data || {};
+  // useBackends() here shares the same cached /backends request the backend
+  // selector already makes (window.HermesUI dedupes by URL) — just for the
+  // optional `labels` map (protocol v2), preferred over BACKEND_META's
+  // hard-coded names in the fuel-gauge row below.
+  var backendsEp = useBackends();
+  var backendLabels = (backendsEp.data && backendsEp.data.labels) || {};
   var models = (s.health && s.health.models) || {};
   var connState = s.connection === "open" ? "connected" : s.connection === "connecting" ? "connecting" : s.connection === "reconnecting" ? "reconnecting" : "disconnected";
 
@@ -1041,7 +1183,7 @@ function SystemBar(props) {
       <${UI.Row} align="center" gap="sm" wrap=${false} style=${{ flex: "none" }}>
         <span className="hui-dot hui-dot--accent hui-dot--pulse" aria-hidden="true" />
         <span className="hui-t-title">JARVIS</span>
-        ${bw >= 640 ? html`<${UI.Badge} icon="lock" size="sm">Local only<//>` : null}
+        ${bw >= 640 ? html`<${UI.Badge} icon="lock" size="sm" title="Speech recognition and the voice run on this Mac">Voice on-box<//>` : null}
       <//>
       ${showRam ? html`<${UI.Divider} orientation="vertical" />` : null}
       <div style=${{ display: "flex", alignItems: "center", gap: 20, minWidth: 0, flex: "1 1 auto", overflow: "hidden" }}>
@@ -1063,13 +1205,14 @@ function SystemBar(props) {
                   var g = (cr.gauges || [])[0];
                   var pct = g && typeof g.remaining_pct === "number" ? g.remaining_pct * 100 : 0;
                   return html`<div key=${id} style=${{ width: 124, flex: "none" }}>
-                    <${UI.Meter} size="sm" label=${BACKEND_META[id].name} value=${pct} max=${100} valueText=${Math.round(pct) + "%"} />
+                    <${UI.Meter} size="sm" label=${backendLabels[id] || BACKEND_META[id].name} value=${pct} max=${100} valueText=${Math.round(pct) + "%"} />
                   </div>`;
                 })}
             </div>`
           : null}
       </div>
       <${UI.Row} align="center" gap="sm" wrap=${false} style=${{ flex: "none" }}>
+        <${BrainSelector} act=${act} />
         <${BackendSelector} act=${act} />
         <${UI.ConnectionPill} state=${connState} attempt=${s.retryAttempt} />
         <${FullscreenButton} active=${s.fullscreen || s.pseudoFullscreen} pseudo=${s.pseudoFullscreen} onClick=${act.toggleFullscreen} />
@@ -1096,7 +1239,7 @@ function OfflineSheet(props) {
             <//>`}>
           <${UI.Stack} gap="sm">
             <span>
-              Voice capture is paused. Task state is safe in <code className="hui-code">jarvis.db</code> and replays on reconnect. Retrying with backoff${s.retryAttempt ? " — attempt " + s.retryAttempt : ""}.
+              Voice capture is paused. Task state is safe in <code className="hui-code">jarvis.db</code> and replays on reconnect. Retrying with backoff${s.retryAttempt ? ": attempt " + s.retryAttempt : ""}.
               ${s.retryAttempt && s.retryAt ? html` <${UI.Countdown} to=${s.retryAt} fallback="" />` : null}
             </span>
             ${s.lastEventTs ? html`<span className="hui-t-micro">last event <${UI.RelTime} at=${s.lastEventTs} /></span>` : null}

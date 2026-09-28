@@ -49,12 +49,12 @@ export function TurnStrip(props) {
   var e2e = (s.turnLatency || {}).e2e_first_audio;
   var e2eLabel = typeof e2e === "number" ? UI.format.duration(e2e)
     : s.latency.e2e_first_audio && s.latency.e2e_first_audio.p50 != null ? UI.format.duration(s.latency.e2e_first_audio.p50)
-    : "—";
+    : "-";
   var wide = s.w >= 1280; // per-segment labels vs a single e2e figure
 
   return html`
     <${UI.Row} align="center" gap="md" style=${{ padding: "10px 20px", borderBottom: "1px solid var(--hui-line)", flex: "none" }}>
-      <span className="hui-t-micro" style=${{ whiteSpace: "nowrap" }}>${"TURN " + (s.turnId != null ? "#" + s.turnId : "—")}</span>
+      <span className="hui-t-micro" style=${{ whiteSpace: "nowrap" }}>${"TURN " + (s.turnId != null ? "#" + s.turnId : "-")}</span>
       <div style=${{ flex: 1, minWidth: 0 }}>
         <${UI.SegmentBar} segments=${segs.length ? segs : [{ label: "idle", value: 1, tone: "neutral" }]} legend=${wide} label="Turn latency waterfall" />
       </div>
@@ -70,6 +70,10 @@ export function StateCaption(props) {
   var meta = stateMeta(ui);
   var accent = stateAccent(ui);
   var hint = s.fsmDetail && s.connection === "open" ? meta.hint + " · " + s.fsmDetail : meta.hint;
+  // turn.pending (protocol v2): the server's turn-detector thinks the user
+  // paused but isn't finished — subtle hint until the next vad.speech or
+  // stt.final clears it (see app.js's onEvent). Never a fake FSM state.
+  if (s.turnPending) hint = hint + " · listening, go on";
   return html`
     <div style=${{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, pointerEvents: "none" }} aria-live="polite">
       <${UI.Row} align="center" gap="sm">
@@ -264,7 +268,7 @@ export function Composer(props) {
                 onChange=${setDraft}
                 minRows=${1}
                 maxRows=${4}
-                placeholder="Type to Jarvis, or hold Space to talk…"
+                placeholder="Type to Jarvis, or hold Space to talk"
                 onKeyDown=${function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
             </div>
             <${UI.Button} variant="primary" onClick=${send}>Send<//>
@@ -272,7 +276,7 @@ export function Composer(props) {
           <//>
           <${UI.Row} align="center" gap="md" wrap=${false}>
             <${UI.Segmented}
-              options=${[{ value: "ptt", label: "Push to talk" }, { value: "vad", label: "VAD (experimental)" }]}
+              options=${[{ value: "ptt", label: "Push to talk" }, { value: "vad", label: "Hands-free" }]}
               value=${s.micMode}
               onChange=${act.setMicMode} />
             <div style=${{ flex: 1, height: 3, borderRadius: 2, background: "var(--hui-line)", overflow: "hidden" }}>

@@ -3,8 +3,10 @@ hermes-plugin-credits plugin so jarvisd owns this logic outright and
 has no dependency on any external dashboard plugin. Pure functions +
 an async status(force) aggregator; no FastAPI router.
 
-Readers: OpenRouter (auth/key), Anthropic (unified 5h/7d headers),
-OpenAI/Codex (live weekly via `codex app-server account/rateLimits/read`).
+Readers: OpenRouter (auth/key), Anthropic (unified 5h/7d headers), OpenCode Go
+(usage windows -- this is what the "cloud" credits gauge in credits.py now
+reads, since the default profile moved to OpenCode Go/codecloud), OpenAI/Codex
+(live weekly via `codex app-server account/rateLimits/read`).
 """
 
 from __future__ import annotations
@@ -117,6 +119,46 @@ async def _openrouter(client: httpx.AsyncClient) -> dict[str, Any]:
         }
     except Exception as e:
         return {"provider": "openrouter", "configured": True, "ok": False, "error": str(e)[:200]}
+
+
+def _go_window(node: Any) -> dict[str, Any] | None:
+    if not isinstance(node, dict) or node.get("percent") is None:
+        return None
+    try:
+        percent = float(node["percent"])
+    except (TypeError, ValueError):
+        return None
+    return {"used_percent": percent, "status": node.get("status"), "resets_at": node.get("resetsAt")}
+
+
+async def _opencode_go(client: httpx.AsyncClient) -> dict[str, Any]:
+    """OpenCode Go subscription usage windows (rolling 5h, weekly, monthly).
+
+    GET /zen/go/v1/usage is a metadata read: it spends no quota. It reports the
+    workspace-wide percent used and reset time per window, the same numbers the
+    opencode.ai console shows. Every Go request needs a non-Python User-Agent
+    (Cloudflare 403s the default urllib/httpx UA) -- verified live 2026-09-28.
+    """
+    key = os.getenv("OPENCODE_GO_API_KEY")
+    if not key:
+        return {"provider": "opencode_go", "configured": False}
+    try:
+        r = await client.get(
+            "https://opencode.ai/zen/go/v1/usage",
+            headers={"Authorization": f"Bearer {key}", "User-Agent": "jarvisd/1.0"},
+        )
+        r.raise_for_status()
+        usage = r.json().get("usage") or {}
+        return {
+            "provider": "opencode_go",
+            "configured": True,
+            "ok": True,
+            "rolling": _go_window(usage.get("rolling")),
+            "weekly": _go_window(usage.get("weekly")),
+            "monthly": _go_window(usage.get("monthly")),
+        }
+    except Exception as e:
+        return {"provider": "opencode_go", "configured": True, "ok": False, "error": str(e)[:200]}
 
 
 def _hdr_int(headers, name: str):
@@ -756,6 +798,7 @@ async def status(force: bool = False) -> dict[str, Any]:
             _openrouter(client),
             _anthropic(client),
             _openai(client),
+            _opencode_go(client),
             return_exceptions=False,
         )
     providers = [p for p in results if p.get("configured")]

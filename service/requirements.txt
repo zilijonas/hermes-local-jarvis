@@ -1,6 +1,8 @@
 fastapi
 uvicorn[standard]
-faster-whisper
+faster-whisper          # STT fallback
+parakeet-mlx            # STT primary (Apple Silicon, MLX)
+onnxruntime>=1.24       # Silero VAD + Smart Turn v3 (int8 graph needs >=1.24)
 kokoro-onnx
 soundfile
 webrtcvad-wheels

@@ -1,5 +1,22 @@
 # Hermes profiles/sessions/delegation — verified facts (2026-07-27)
 
+**2026-09-28: the `jarvis-voice` Hermes profile described below was
+removed.** It showed up as a selectable entry in the dashboard's own
+profile switcher, a confusing, unintended side effect of jarvisd having a
+real Hermes profile at all, since jarvisd was never meant to be something a
+person picks and chats with directly. jarvisd now keeps its own state at
+`~/ai/state/jarvis-voice/` (config key `paths.hermes_home`, historical name)
+and runs its local worker backend with a plain, profile-free `HERMES_HOME`
+(`paths.worker_home`) instead of `-p jarvis-voice`. The cloud worker/brain
+paths shell out to the pre-existing `default` profile, which was never
+jarvis-specific. The removed profile was backed up to
+`~/ai/backups/jarvis-voice-profile-20260928-174001.tgz` (see
+`docs/ROLLBACK.md`). Everything below this point is historical: it explains
+Hermes profile/session/delegation mechanics that are still true of Hermes in
+general (and of the `default` profile jarvisd now calls into), but the
+`jarvis-voice` profile itself, and any command below written as
+`-p jarvis-voice`, no longer exists.
+
 ## Profile mechanics
 - Created: `hermes profile create jarvis-voice --no-skills` (DONE 2026-07-27). Fresh profile:
   empty placeholder `.env` (0600), no `auth.json`, `.no-bundled-skills` marker blocks bundled

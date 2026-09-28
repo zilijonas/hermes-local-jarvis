@@ -9,6 +9,7 @@ import { StateCaption, ToolChip, MicButton, MicBanner, FullscreenButton, TurnRow
 import { TaskCardMobile, ActivityRows } from "./work.js";
 import { MemorySheetContent } from "./memory.js";
 import { BackendChipMobile, BackendSheetContent } from "./backend.js";
+import { BrainChipMobile, BrainSheetContent } from "./brain.js";
 import { NoticeRows, NoticeDot, noticeSummary } from "./notices.js";
 import { useTasks } from "../api.js";
 
@@ -80,6 +81,7 @@ function SheetBody(props) {
       <//>`;
   }
   if (s.sheet === "backend") return html`<${BackendSheetContent} act=${act} />`;
+  if (s.sheet === "brain") return html`<${BrainSheetContent} act=${act} />`;
   if (s.sheet === "memory") return html`<${MemorySheetContent} store=${store} />`;
   if (s.sheet === "activity") {
     return s.timeline.length === 0
@@ -89,7 +91,7 @@ function SheetBody(props) {
   return null;
 }
 
-var SHEET_TITLE = { tasks: "Tasks & notifications", memory: "Memory", backend: "Worker backend", activity: "Activity" };
+var SHEET_TITLE = { tasks: "Tasks & notifications", memory: "Memory", backend: "Worker backend", brain: "Brain", activity: "Activity" };
 
 export function MobileShell(props) {
   var store = props.store;
@@ -125,6 +127,7 @@ export function MobileShell(props) {
         <span className="hui-dot hui-dot--accent" aria-hidden="true" />
         <span className="hui-t-title">JARVIS</span>
         <div style=${{ flex: 1 }} />
+        <${BrainChipMobile} act=${act} onClick=${function () { store.set({ sheet: "brain" }); }} />
         <${BackendChipMobile} act=${act} attention=${!!notices.tone} onClick=${function () { store.set({ sheet: "backend" }); }} />
         <${FullscreenButton} active=${s.fullscreen || s.pseudoFullscreen} pseudo=${s.pseudoFullscreen} onClick=${act.toggleFullscreen} mobile />
         <${UI.StatusDot} tone=${s.connection === "open" ? "accent" : s.connection === "closed" ? "danger" : "warn"} pulse=${s.connection !== "open"} label=${"Connection: " + s.connection} />
@@ -149,7 +152,7 @@ export function MobileShell(props) {
         <//>
         <${UI.Row} align="end" gap="sm" style=${{ marginTop: 10 }} wrap=${false}>
           <div style=${{ flex: 1, minWidth: 0 }}>
-            <${UI.Textarea} value=${draft} onChange=${setDraft} minRows=${1} maxRows=${3} placeholder="Message Jarvis…"
+            <${UI.Textarea} value=${draft} onChange=${setDraft} minRows=${1} maxRows=${3} placeholder="Message Jarvis"
               onKeyDown=${function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
           </div>
           <${UI.Button} variant="secondary" disabled=${!speaking} onClick=${act.interrupt}>Stop<//>

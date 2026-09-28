@@ -5,6 +5,20 @@ States (SPEC §WebSocket `state`): idle → listening → transcribing → think
 → (memory|capability|tool|delegating) → speaking → idle, with `interrupted`,
 `blocked`, `error` as cross-cuts. The server is authoritative; the UI renders
 exactly what this module publishes — nothing is faked.
+
+Turn taking (2026-09-28 rework):
+  * push-to-talk: everything between press and release is ONE utterance. The VAD
+    no longer splits it on pauses (that was one source of "chopped sentences").
+  * hands-free: Silero VAD + Smart Turn v3 decide when the user finished
+    (audio/turn.py). If the user starts speaking again before Jarvis has made a
+    sound, the half-answered turn is aborted and the two fragments are merged
+    into one turn (`stt.final` with merged=true), so a mid-sentence pause never
+    gets its own answer.
+  * "speaking" lasts until the audio has actually PLAYED, not until synthesis
+    finished: the server tracks queued playback time and the client confirms
+    with `playback.end`. Echo rejection and barge-in key off real playback.
+  * barge-in while Jarvis talks needs sustained voice AND at least two
+    transcribed words that are not an echo of what Jarvis is saying.
 """
 from __future__ import annotations
 
@@ -15,11 +29,21 @@ import re
 import time
 from typing import Any, Optional
 
-from .audio.vad import VadEndpointer
+from .audio.turn import build_endpointer
 from .audio.stt import StreamingSTT
-from .audio.tts import StreamingTTS
+from .audio.tts import StreamingTTS, plain_typography, speakable
 from .mediator.loop import Mediator
+from .reminders import ReminderScheduler
 from . import metrics
+
+TTS_RATE = 24000
+_SIDE_EFFECT_TOOLS = ("delegate_task", "task_control")
+# Said the instant a slow tool starts when nothing has been spoken yet: a tool turn
+# is two LLM round trips, and silence for 3-5 s reads as "didn't hear me".
+_TOOL_ACKS = {"delegate_task": "On it.", "memory_recall": "Let me check.",
+              "deep_answer": "Let me think.", "capability_search": "One sec."}
+_CODEX_RE = re.compile(r"\bcodex\b", re.I)
+_CLAUDE_RE = re.compile(r"\bclaude( code)?\b", re.I)
 
 
 class Pipeline:
@@ -34,36 +58,47 @@ class Pipeline:
         self.workers = workers
         self.memory = memory_mod
         self.caps = caps_router
-        self.vad = VadEndpointer(
-            aggressiveness=cfg.vad.aggressiveness,
-            endpoint_ms=cfg.vad.endpoint_ms,
-            min_speech_ms=cfg.vad.min_speech_ms)
+        self.vad, self.vad_label = build_endpointer(dict(cfg.data.get("vad") or {}))
         self.state = "idle"
         self.mode = "ptt"
         self.mic_active = False
+        stt_cfg = cfg.data.get("stt") or {}
+        self._partial_every = max(0.2, float(stt_cfg.get("partial_interval_ms", 400)) / 1000)
+        # current utterance
         self._utt_buf = bytearray()
+        self._utt_id = ""
+        self._utt_seq = 0
+        self._finalized: set[str] = set()
         self._partial_task: Optional[asyncio.Task] = None
+        self._last_partial_at = 0.0
+        # playback
         self._tts_cancel: Optional[asyncio.Event] = None
-        self._speaking = False
+        self._speaking = False            # a reply/announcement owns the speaker
+        self._play_until = 0.0            # monotonic time queued audio finishes playing
+        self._last_audible = 0.0
+        self._recent_spoken = ""          # what Jarvis said lately (echo reference)
+        # barge-in
+        self._barge_voiced_ms = 0.0
+        self._barge_checking = False
+        self._barge_done = False
+        # turns
         self._turn_lock = asyncio.Lock()
-        self._loop = asyncio.get_event_loop()
         self._announce_queue: list[str] = []
         self._turn_active = False
-        self._tts_last_end = 0.0          # echo rejection only near real playback
-        self._pending_voiced_ms = 0.0     # sustained-voice accumulator for barge-in
-        # Turns are SERIALIZED through a queue, never cancelled mid-thought. A
-        # follow-up spoken while Jarvis is working ("while you're doing that, also
-        # tell me X") enqueues as the next turn — so BOTH questions get answered and
-        # no in-flight tool/delegation is thrown away. Barge-in only stops audio
-        # playback; it never kills the mediator or a background task.
-        self._turn_queue: "asyncio.Queue[dict]" = asyncio.Queue()
+        self._current: Optional[dict[str, Any]] = None
+        self._carry: Optional[dict[str, Any]] = None
+        # Turns are SERIALIZED, never cancelled mid-thought once they have spoken or
+        # started work. A follow-up while Jarvis works queues as the next turn.
+        self._pending: list[dict[str, Any]] = []
         self._drainer: Optional[asyncio.Task] = None
+        # Reminders Jarvis owns (jarvis.db + timer); app.py starts the scheduler.
+        self.reminders = ReminderScheduler(db, self._announce)
         workers.on_task_event = self._on_task_event  # optional hook
         workers.wait_turn_clear = self._wait_turn_clear
 
     async def _wait_turn_clear(self) -> None:
-        """Workers hold their (mediator-evicting) model load until no voice turn
-        is mid-flight, so a worker's prefill never lands under an utterance."""
+        """Workers start once no voice turn is mid-flight, so a worker's prefill
+        never competes with an utterance for the GPU."""
         while self._turn_active or self._speaking:
             await asyncio.sleep(0.25)
 
@@ -77,70 +112,131 @@ class Pipeline:
             ev["turn_id"] = turn_id
         self.bus.publish(ev)
 
+    def _busy(self) -> bool:
+        return self._turn_active or bool(self._pending) or self._speaking
+
+    # ------------------------------------------------------------- playback clock
+    def audible(self) -> bool:
+        return time.monotonic() < self._play_until + 0.1
+
+    def _audio_sent(self, samples: int) -> None:
+        if not getattr(self.bus, "has_listeners", lambda: True)():
+            return  # nobody is playing it (typed API call, UI closed): no clock to run
+        now = time.monotonic()
+        self._play_until = max(self._play_until, now) + samples / TTS_RATE
+        self._last_audible = self._play_until
+
+    def playback_ended(self) -> None:
+        """Client says its player drained: trust it over the estimate."""
+        now = time.monotonic()
+        if self._play_until > now:
+            self._play_until = now
+            self._last_audible = now
+
+    async def _wait_played(self, cancel: Optional[asyncio.Event]) -> None:
+        deadline = self._play_until + 1.5
+        while time.monotonic() < self._play_until and time.monotonic() < deadline:
+            if cancel is not None and cancel.is_set():
+                return
+            await asyncio.sleep(0.05)
+
     # ------------------------------------------------------------- mic I/O
+    def _new_utterance(self) -> str:
+        self._utt_seq += 1
+        self._utt_id = f"u{self._utt_seq}"
+        self._utt_buf.clear()
+        self._last_partial_at = 0.0
+        self._barge_voiced_ms = 0.0
+        self._barge_done = False
+        return self._utt_id
+
     def mic_start(self) -> None:
         self.mic_active = True
         self.vad.reset()
-        self._utt_buf.clear()
-        if self._speaking:
-            self.barge_in("mic reopened")
-        self._set_state("listening")
-        # Pre-warm the mediator while the user is still talking: if a worker run
-        # evicted gemma, the ~6 s reload happens under the utterance, not after it.
+        self._new_utterance()
+        if self.mode == "ptt" and (self._speaking or self.audible()):
+            self.barge_in("push to talk")
+        if not self._busy():
+            self._set_state("listening")
+        # Pre-warm the mediator while the user is still talking.
         asyncio.get_running_loop().create_task(self.mediator.warmup())
 
     def mic_stop(self) -> None:
-        """PTT release: whatever is buffered becomes the utterance."""
+        """PTT release (or hands-free mic off): what is buffered becomes the utterance."""
+        was_ptt = self.mode == "ptt"
+        in_speech = getattr(self.vad, "in_speech", False) or getattr(self.vad, "_in_speech", False)
         self.mic_active = False
         pcm = bytes(self._utt_buf) + self.vad.flush()
+        utt_id = self._utt_id
         self._utt_buf.clear()
-        if len(pcm) >= 3200:  # ≥100 ms of speech-ish audio
-            self._spawn_turn(pcm)
-        elif not self._turn_active and self._turn_queue.empty() and not self._speaking:
+        self.vad.reset()
+        if len(pcm) >= 8000 and (was_ptt or in_speech):  # ≥250 ms
+            self._spawn_turn(pcm, utt_id)
+        elif not self._busy():
             self._set_state("idle")
-
-    # Sustained real speech (not a lone blip) needed before we stop playback.
-    _BARGE_MS_SPEAKING = 240
 
     def feed_audio(self, chunk: bytes) -> None:
         if not self.mic_active:
             return
+        if self.mode == "ptt":
+            # Push-to-talk: the key decides where the utterance ends, not pauses.
+            self._utt_buf.extend(chunk)
+            self._maybe_partial()
+            return
         for kind, payload in self.vad.feed(chunk):
             if kind == "speech_start":
-                self._pending_voiced_ms = 0.0
+                self._new_utterance()
+                self.bus.publish({"t": "vad.speech", "active": True, "utt_id": self._utt_id})
+                self._maybe_continuation()
             elif kind == "chunk":
                 self._utt_buf.extend(payload)
                 self._maybe_partial()
-                # Only barge to stop AUDIO while speaking. While thinking we let the
-                # turn finish and just buffer this utterance — it becomes the next
-                # queued turn (no work is thrown away).
-                if self._speaking and self._pending_voiced_ms >= 0:
-                    self._pending_voiced_ms += 20.0
-                    if self._pending_voiced_ms >= self._BARGE_MS_SPEAKING:
-                        self.barge_in("sustained voice")
-                        self._pending_voiced_ms = float("-inf")  # once per utterance
+                if (self._speaking or self.audible()) and getattr(self.vad, "last_is_speech", True):
+                    self._barge_voiced_ms += len(payload) / 32.0
+                    self._maybe_barge()
+            elif kind == "pending":
+                self.bus.publish({"t": "turn.pending", "utt_id": self._utt_id})
+            elif kind == "resume":
+                self.bus.publish({"t": "vad.speech", "active": True, "utt_id": self._utt_id})
             elif kind == "speech_end":
-                self._pending_voiced_ms = 0.0
+                self.bus.publish({"t": "vad.speech", "active": False, "utt_id": self._utt_id})
                 pcm = bytes(payload)
+                utt_id = self._utt_id
                 self._utt_buf.clear()
-                self._spawn_turn(pcm)
+                self._spawn_turn(pcm, utt_id)
 
     def _maybe_partial(self) -> None:
         if self._partial_task and not self._partial_task.done():
             return
-        if len(self._utt_buf) < 16000:  # <0.5 s — too early
-            return
-        snapshot = bytes(self._utt_buf)
+        now = time.monotonic()
+        if len(self._utt_buf) < 12800 or now - self._last_partial_at < self._partial_every:
+            return  # <0.4 s of audio, or too soon
+        self._last_partial_at = now
+        snapshot, utt_id = bytes(self._utt_buf), self._utt_id
 
         async def _run():
             text = await asyncio.get_running_loop().run_in_executor(
                 None, self.stt.transcribe_partial, snapshot)
-            if text:
-                self.bus.publish({"t": "stt.partial", "text": text})
+            if text and utt_id not in self._finalized:
+                self.bus.publish({"t": "stt.partial", "text": text, "utt_id": utt_id})
         self._partial_task = asyncio.get_running_loop().create_task(_run())
 
+    # ------------------------------------------------------------- continuation
+    def _maybe_continuation(self) -> None:
+        """User speaks again before Jarvis made a sound: the last turn was a fragment.
+        Abort it (no side effects yet, nothing audible) and carry its text forward."""
+        cur = self._current
+        if (self.mode != "vad" or cur is None or cur.get("aborted") or cur["spoke"]
+                or cur["side_effects"] or self._pending or self._carry is not None
+                or self.audible() or time.monotonic() - cur["t_endpoint"] > 4.0):
+            return
+        cur["aborted"] = True
+        if self._tts_cancel:
+            self._tts_cancel.set()
+        self._carry = {"text": cur["text"], "turn_id": cur["turn_id"]}
+        metrics.counter("turn_merges")
+
     # ------------------------------------------------------------- WS adapter
-    # ws.py's contract: it awaits these two on every inbound frame.
     _MAX_AUDIO_FRAME = 256 * 1024  # ~8 s of 16 kHz s16le; anything bigger is garbage
 
     async def handle_audio_chunk(self, raw: bytes) -> None:
@@ -158,10 +254,13 @@ class Pipeline:
             mode = event.get("mode")
             if mode in ("ptt", "vad"):
                 self.mode = mode
+                self.vad.reset()
                 self.bus.publish({"t": "state", "value": self.state,
                                   "detail": f"mode={mode}"})
         elif t == "barge_in":
             self.barge_in("client")
+        elif t == "playback.end":
+            self.playback_ended()
         elif t == "turn.text":
             text = str(event.get("text", "")).strip()
             if text:
@@ -175,64 +274,109 @@ class Pipeline:
                                   "recoverable": True})
 
     # ------------------------------------------------------------- barge-in
+    _BARGE_MS = 300
+
+    def _maybe_barge(self) -> None:
+        if (self._barge_done or self._barge_checking
+                or self._barge_voiced_ms < self._BARGE_MS):
+            return
+        self._barge_checking = True
+        snapshot = bytes(self._utt_buf)
+
+        async def _check():
+            try:
+                text = await asyncio.get_running_loop().run_in_executor(
+                    None, self.stt.transcribe_partial, snapshot)
+                if text is None:
+                    return  # decoder busy — the next voiced frame re-checks
+                words = re.findall(r"[A-Za-z']+", text)
+                if len(words) >= 2 and not self._is_echo(text, near=True):
+                    self._barge_done = True
+                    self.barge_in("you spoke")
+            finally:
+                self._barge_checking = False
+        asyncio.get_running_loop().create_task(_check())
+
     def barge_in(self, reason: str = "user") -> None:
-        """Stop the CURRENT audio playback only. Never cancels the mediator or a
-        background task — the user's next utterance queues as the next turn."""
-        if not self._speaking:
+        """Stop the CURRENT audio playback. Work already started keeps running; the
+        user's words become the next turn."""
+        if not (self._speaking or self.audible()):
             return
         if self._tts_cancel:
             self._tts_cancel.set()
         self._speaking = False
-        self._tts_last_end = time.monotonic()
+        now = time.monotonic()
+        self._play_until = now
+        self._last_audible = now
         self.bus.publish({"t": "tts.end", "interrupted": True})
         self._set_state("interrupted", detail=reason)
         metrics.counter("barge_ins")
 
     # ------------------------------------------------------------- turns (queued)
-    def _spawn_turn(self, pcm: bytes) -> None:
-        # Transcribe off the queue-drain path so STT of a follow-up overlaps the
-        # current turn; the resulting text is what gets enqueued.
-        asyncio.get_running_loop().create_task(self._transcribe_and_enqueue(pcm))
+    def _spawn_turn(self, pcm: bytes, utt_id: str = "") -> None:
+        # Transcribe off the drain path so STT of a follow-up overlaps the current turn.
+        asyncio.get_running_loop().create_task(self._transcribe_and_enqueue(pcm, utt_id))
 
-    async def _transcribe_and_enqueue(self, pcm: bytes) -> None:
+    async def _transcribe_and_enqueue(self, pcm: bytes, utt_id: str = "") -> None:
+        t_endpoint = time.monotonic()
         turn_id = f"t{int(time.time() * 1000) % 10 ** 10}"
-        if not (self._turn_active or not self._turn_queue.empty()):
+        if not self._busy():
             self._set_state("transcribing", turn_id=turn_id)
         text, ms_stt = await self._stt_final(pcm)
-        self.bus.publish({"t": "stt.final", "text": text, "ms": ms_stt, "turn_id": turn_id})
+        if utt_id:
+            self._finalized.add(utt_id)
+            if len(self._finalized) > 200:
+                self._finalized = set(sorted(self._finalized)[-100:])
         metrics.record("stt", ms_stt)
-        if not text.strip():
-            if not self._turn_active and self._turn_queue.empty() and not self._speaking:
-                self._set_state("idle", detail="no speech recognized")
+        text = text.strip()
+        carry, self._carry = self._carry, None
+
+        if not text or self._is_echo(text):
+            ignored = bool(text)
+            if text:
+                self.bus.publish({"t": "stt.ignored", "reason": "echo of my own speech",
+                                  "text": text, "turn_id": turn_id, "utt_id": utt_id})
+            if carry:  # the continuation was noise: answer the original fragment
+                self._enqueue_turn(carry["text"], carry["turn_id"], t_endpoint)
+            elif not self._busy():
+                self._set_state("idle", detail="echo rejected" if ignored
+                                else "no speech recognized")
             return
-        if self._echo_of_own_speech(text):
-            self.bus.publish({"t": "stt.ignored", "reason": "echo of my own speech",
-                              "text": text, "turn_id": turn_id})
-            if not self._turn_active and self._turn_queue.empty() and not self._speaking:
-                self._set_state("idle", detail="echo rejected")
+
+        merged = False
+        if carry:
+            text, turn_id, merged = f"{carry['text']} {text}", carry["turn_id"], True
+        elif self._pending:
+            last = self._pending[-1]
+            last["text"] = f"{last['text']} {text}"
+            self.bus.publish({"t": "stt.final", "text": last["text"], "ms": ms_stt,
+                              "turn_id": last["turn_id"], "utt_id": utt_id, "merged": True})
             return
-        self._enqueue_turn(text, turn_id, time.monotonic())
+        self.bus.publish({"t": "stt.final", "text": text, "ms": ms_stt, "turn_id": turn_id,
+                          "utt_id": utt_id, "merged": merged})
+        self._enqueue_turn(text, turn_id, t_endpoint)
 
     def _enqueue_turn(self, text: str, turn_id: str = "",
                       t_endpoint: Optional[float] = None) -> None:
-        self._turn_queue.put_nowait({"text": text, "turn_id": turn_id,
-                                     "t_endpoint": t_endpoint})
+        self._pending.append({"text": text,
+                              "turn_id": turn_id or f"t{int(time.time() * 1000) % 10 ** 10}",
+                              "t_endpoint": t_endpoint})
         if self._drainer is None or self._drainer.done():
             self._drainer = asyncio.get_running_loop().create_task(self._drain_turns())
 
     async def _drain_turns(self) -> None:
-        while not self._turn_queue.empty():
-            item = self._turn_queue.get_nowait()
+        while self._pending:
+            item = self._pending.pop(0)
             try:
-                await self.run_turn(item["text"], turn_id=item.get("turn_id", ""),
+                await self.run_turn(item["text"], turn_id=item["turn_id"],
                                     t_endpoint=item.get("t_endpoint"))
             except Exception as e:  # noqa: BLE001 — one bad turn must not stop the queue
                 self.bus.publish({"t": "error", "message": f"turn failed: {e}"[:300],
                                   "recoverable": True})
                 self.bus.publish({"t": "state", "value": "error",
                                   "detail": str(e)[:120]})
-        if not self._speaking:
-            self._set_state("idle")
+        if not self._speaking and self.state not in ("error", "blocked"):
+            self._set_state("listening" if self.mic_active and self.mode == "vad" else "idle")
         self._drain_announcements()
 
     async def run_turn(self, text: str, turn_id: str = "",
@@ -242,19 +386,25 @@ class Pipeline:
             turn_id = turn_id or f"t{int(time.time() * 1000) % 10 ** 10}"
             t_endpoint = t_endpoint or time.monotonic()
             self._turn_active = True
+            cur = {"turn_id": turn_id, "text": text, "t_endpoint": t_endpoint,
+                   "spoke": False, "side_effects": False, "aborted": False}
+            self._current = cur
             self._set_state("thinking", turn_id=turn_id)
 
             sentence_q: asyncio.Queue[Optional[str]] = asyncio.Queue()
             self._tts_cancel = asyncio.Event()
             speak_task = asyncio.get_running_loop().create_task(
-                self._speaker(sentence_q, turn_id, t_endpoint))
+                self._speaker(sentence_q, turn_id, t_endpoint, cur))
 
             sent_buf = ""
             cuts_done = 0
 
             def on_delta(d: str) -> None:
                 nonlocal sent_buf, cuts_done
-                self.bus.publish({"t": "mediator.delta", "text": d, "turn_id": turn_id})
+                if cur["aborted"]:
+                    return
+                self.bus.publish({"t": "mediator.delta", "text": d.replace("\u2014", ",").replace("\u2026", "."),
+                                  "turn_id": turn_id})
                 sent_buf += d
                 while True:
                     cut = self._sentence_cut(sent_buf, first=(cuts_done == 0))
@@ -267,18 +417,32 @@ class Pipeline:
 
             def on_tool(name: str, args: dict, phase: str) -> None:
                 state = {"memory_recall": "memory", "capability_search": "capability",
-                         "delegate_task": "delegating"}.get(name, "tool")
+                         "delegate_task": "delegating", "deep_answer": "thinking"}.get(name, "tool")
                 if phase == "start":
+                    ack = _TOOL_ACKS.get(name)
+                    if ack and not cur["spoke"] and not cur.get("acked") and not sent_buf.strip() \
+                            and cuts_done == 0 and self.cfg.data.get("tts", {}).get("tool_acks", True):
+                        cur["acked"] = True
+                        self.bus.publish({"t": "mediator.delta", "text": ack + " ",
+                                          "turn_id": turn_id, "kind": "ack"})
+                        sentence_q.put_nowait(ack)
+                    if name in _SIDE_EFFECT_TOOLS or (
+                            name == "quick_action"
+                            and str(args.get("action_id", "")).startswith("memory.note")):
+                        cur["side_effects"] = True
                     self._set_state(state, detail=name, turn_id=turn_id)
                 self.bus.publish({"t": "meta_tool", "name": name, "args": args,
                                   "phase": phase, "turn_id": turn_id})
+
+            async def dispatch(name: str, args: dict) -> dict[str, Any]:
+                return await self._dispatch_meta_tool(name, args, user_text=text)
 
             try:
                 # Hard cap: a wedged mediator/tool must never leave the assistant
                 # deaf-mute behind the turn lock.
                 result = await asyncio.wait_for(
                     self.mediator.turn(
-                        text, tools=self._dispatch_meta_tool,
+                        text, tools=dispatch,
                         on_delta=on_delta, on_tool=on_tool, cancel=self._tts_cancel),
                     timeout=90.0)
             except asyncio.TimeoutError:
@@ -299,11 +463,19 @@ class Pipeline:
             finally:
                 self._turn_active = False
 
+            if cur["aborted"]:
+                # Superseded by a continuation: silently drop, the merged turn follows.
+                sentence_q.put_nowait(None)
+                await asyncio.gather(speak_task, return_exceptions=True)
+                self.bus.publish({"t": "turn.merged", "turn_id": turn_id})
+                return {"reply_text": "", "merged": True, "turn_id": turn_id}
+
             if sent_buf.strip():
                 sentence_q.put_nowait(sent_buf.strip())
             sentence_q.put_nowait(None)
             await speak_task
 
+            result["text"] = plain_typography(result["text"])
             self.bus.publish({"t": "mediator.done", "text": result["text"],
                               "ms_first_token": result["ms_first_token"],
                               "ms_total": result["ms_total"], "turn_id": turn_id})
@@ -312,50 +484,62 @@ class Pipeline:
                              ms_first_token=result["ms_first_token"])
             # Only settle to idle if this was the last queued turn; otherwise the
             # drainer moves straight to the next one without a visible idle flicker.
-            if self._turn_queue.empty() and self.state not in ("error", "blocked"):
+            if not self._pending and self.state not in ("error", "blocked", "interrupted"):
                 self._set_state("done", turn_id=turn_id)
-                if not self._speaking:
-                    self._set_state("idle")
             return {"reply_text": result["text"],
                     "actions": [c["name"] for c in result["tool_calls"]],
                     "turn_id": turn_id}
 
-    async def _speaker(self, q: asyncio.Queue, turn_id: str,
-                       t_endpoint: float) -> None:
+    def _remember_spoken(self, text: str) -> None:
+        self._recent_spoken = (self._recent_spoken + " " + text)[-600:]
+
+    def _emit_audio(self, loop, cancel, turn_id: str):
+        def on_chunk(data: bytes, samples: int) -> None:
+            if cancel is not None and cancel.is_set():
+                return  # barge-in already announced tts.end — drop late audio
+
+            def _send() -> None:
+                if cancel is not None and cancel.is_set():
+                    return
+                self._audio_sent(samples)
+                self.bus.publish_binary({"t": "tts.chunk_hdr", "samples": samples,
+                                         "turn_id": turn_id}, data)
+            loop.call_soon_threadsafe(_send)
+
+        def on_amp(v: float) -> None:
+            loop.call_soon_threadsafe(self.bus.publish, {"t": "tts.amp", "v": round(v, 3)})
+        return on_chunk, on_amp
+
+    async def _speaker(self, q: asyncio.Queue, turn_id: str, t_endpoint: float,
+                       cur: Optional[dict] = None) -> None:
         first = True
         cancel = self._tts_cancel
+        loop = asyncio.get_running_loop()
+        on_chunk, on_amp = self._emit_audio(loop, cancel, turn_id)
         while True:
             sentence = await q.get()
             if sentence is None or (cancel and cancel.is_set()):
                 break
+            text = speakable(sentence)
+            if not text:
+                continue
             if first:
+                if cur is not None:
+                    cur["spoke"] = True
                 self._set_state("speaking", turn_id=turn_id)
                 self._speaking = True
+            self._remember_spoken(text)
             self.bus.publish({"t": "tts.start", "text": sentence, "turn_id": turn_id})
-
-            loop = asyncio.get_running_loop()
-
-            def on_chunk(data: bytes, samples: int) -> None:
-                if cancel and cancel.is_set():
-                    return  # barge-in already announced tts.end — drop late audio
-                loop.call_soon_threadsafe(
-                    self.bus.publish_binary, {"t": "tts.chunk_hdr", "samples": samples,
-                                              "turn_id": turn_id}, data)
-
-            def on_amp(v: float) -> None:
-                loop.call_soon_threadsafe(
-                    self.bus.publish, {"t": "tts.amp", "v": round(v, 3)})
-
             try:
-                stats = await self.tts.speak(sentence, on_chunk=on_chunk, on_amp=on_amp,
+                stats = await self.tts.speak(text, on_chunk=on_chunk, on_amp=on_amp,
                                              voice=self.cfg.tts.voice, speed=self.cfg.tts.speed,
                                              cancel_event=cancel)
             except Exception as e:  # noqa: BLE001 — a TTS failure must never mute the reply
                 self.bus.publish({"t": "error", "message": f"tts failed: {e}",
                                   "recoverable": True})
                 try:
-                    stats = await asyncio.get_running_loop().run_in_executor(
-                        None, lambda: self.tts.say_fallback(sentence, on_chunk, on_amp,
+                    stats = await loop.run_in_executor(
+                        None, lambda: self.tts.say_fallback(text, on_chunk, on_amp,
                                                             cancel_event=cancel))
                 except Exception:
                     stats = {"ms_first_chunk": 0}
@@ -364,11 +548,13 @@ class Pipeline:
                 self.bus.publish({"t": "latency", "stage": "e2e_first_audio",
                                   "ms": round(e2e, 1), "turn_id": turn_id})
                 metrics.record("e2e_first_audio", e2e)
-                metrics.record("tts_first_chunk", stats.get("ms_first_chunk", 0))
+                metrics.record("tts_first_chunk", stats.get("ms_first_chunk") or 0)
                 first = False
-        self._speaking = False
-        self._tts_last_end = time.monotonic()
+        if first:
+            return  # nothing was spoken (aborted or empty reply)
+        await self._wait_played(cancel)
         if not (cancel and cancel.is_set()):  # barge_in already sent an interrupted tts.end
+            self._speaking = False
             self.bus.publish({"t": "tts.end", "turn_id": turn_id})
 
     # ------------------------------------------------------------- helpers
@@ -378,39 +564,52 @@ class Pipeline:
             None, lambda: self.stt.transcribe_final(pcm)[0])
         return text, (time.monotonic() - t0) * 1000
 
-    def _echo_of_own_speech(self, text: str) -> bool:
-        """Speaker-leak guard: transcript ≈ tail of what Jarvis just said.
+    def _is_echo(self, text: str, near: bool = False) -> bool:
+        """Speaker-leak guard: transcript ≈ something Jarvis just said.
 
-        Only meaningful while playback is running or just ended — a user
-        utterance from silence can legitimately reuse Jarvis's words and must
-        NEVER be eaten (that was the 'transcript disappears' bug)."""
-        near_playback = self._speaking or (time.monotonic() - self._tts_last_end) < 2.5
-        if not near_playback:
+        Only meaningful while audio plays or just stopped — a user utterance from
+        silence can legitimately reuse Jarvis's words and must NEVER be eaten (that
+        was the 'transcript disappears' bug)."""
+        if not near and not (self.audible() or time.monotonic() - self._last_audible < 1.5):
             return False
-        last = (self.mediator.last_reply or "")[-300:].lower()
-        if not last or len(text) < 12:
+        ref = (self._recent_spoken or self.mediator.last_reply or "")[-400:].lower()
+        words = re.findall(r"[a-z']+", text.lower())
+        if not ref or len(words) < 2:
             return False
-        ratio = difflib.SequenceMatcher(None, text.lower(), last).ratio()
-        return ratio > 0.75 or text.lower() in last
+        low = " ".join(words)
+        if low in ref:
+            return True
+        ref_words = set(re.findall(r"[a-z']+", ref))
+        overlap = sum(1 for w in words if w in ref_words) / len(words)
+        ratio = difflib.SequenceMatcher(None, low, ref[-max(len(low) * 2, 60):]).ratio()
+        return overlap >= 0.85 or ratio > 0.75
 
     @staticmethod
     def _sentence_cut(buf: str, first: bool = False) -> Optional[int]:
-        # First fragment cuts aggressively so TTS starts ASAP (kokoro synthesizes
-        # per-fragment; a short lead fragment shaves seconds off first audio).
+        # First fragment cuts early so TTS starts ASAP; later ones prefer whole
+        # sentences so prosody stays natural.
         min_len = 10 if first else 24
         for i, ch in enumerate(buf):
             if ch in ".!?" and i >= min_len and (i + 1 == len(buf) or buf[i + 1] in " \n"):
+                # "e.g." / "3.5" / "Mr." are not sentence ends
+                prev = buf[max(0, i - 3):i].lower()
+                if ch == "." and (prev.endswith(("mr", "ms", "dr", "vs", "e.g", "i.e", "st"))
+                                  or (i + 1 < len(buf) and buf[i + 1].isdigit())):
+                    continue
                 return i + 1
-            if first and ch in ",;:" and i >= 16:
+            if first and ch in ",;:" and i >= 12 and i + 1 < len(buf) and buf[i + 1] == " ":
                 return i + 1
-        limit = 90 if first else 220
-        if len(buf) > limit:  # runaway clause — cut on last space
+            if first and ch in "\u2014\u2013" and i >= 12:   # "Checking now — ..." : speak the lead
+                return i + 1
+        limit = 110 if first else 240
+        if len(buf) > limit:  # runaway clause — cut on last comma/space
             j = max(buf.rfind(",", 0, limit), buf.rfind(" ", 0, limit))
             return j + 1 if j > min_len else limit
         return None
 
     # ------------------------------------------------------------- meta-tools
-    async def _dispatch_meta_tool(self, name: str, args: dict) -> dict[str, Any]:
+    async def _dispatch_meta_tool(self, name: str, args: dict,
+                                  user_text: str = "") -> dict[str, Any]:
         if name == "memory_recall":
             q = str(args.get("query", ""))[:300]
             hits = await asyncio.get_running_loop().run_in_executor(
@@ -428,19 +627,31 @@ class Pipeline:
         if name == "quick_action":
             return self._quick_action(str(args.get("action_id", "")))
 
+        if name == "set_reminder":
+            return self.reminders.set(args.get("text", ""), args.get("in_minutes"),
+                                      args.get("at"))
+
+        if name == "deep_answer" and hasattr(self.mediator, "deep_answer"):
+            return await self.mediator.deep_answer(str(args.get("question", ""))[:2000])
+
         if name == "delegate_task":
             goal = str(args.get("goal", "")).strip()
             if not goal:
                 return {"error": "goal required"}
-            kind = args.get("kind", "local")
-            if kind not in ("local", "codex"):
-                kind = "local"
+            # The backend the user picked governs every task. Codex / Claude Code
+            # only when the user actually asked for them this turn — never because
+            # the model thought a job looked big (shared weekly budgets).
+            said = f"{user_text} {goal}"
+            kind = ("codex" if _CODEX_RE.search(said)
+                    else "claude" if _CLAUDE_RE.search(said) else "")
             cap = self.caps.best(goal)
-            toolsets = cap["toolsets"] if cap and cap["kind"] == "local" else ["file", "terminal"]
-            if cap and cap["kind"] == "codex":
-                kind = "codex"
+            toolsets = cap["toolsets"] if cap and cap.get("kind") == "local" and cap.get("toolsets") \
+                else ["file", "terminal"]
+            context = str(args.get("context", ""))[:2000]
+            if cap and cap.get("hint"):
+                context = f"{context}\nHint: {cap['hint']}".strip()
             return await self.workers.delegate(
-                goal=goal, kind=kind, context=str(args.get("context", ""))[:2000],
+                goal=goal, kind=kind, context=context,
                 toolsets=toolsets, capability_id=cap["id"] if cap else "")
 
         if name == "task_status":
@@ -454,7 +665,7 @@ class Pipeline:
     def _quick_action(self, action_id: str) -> dict[str, Any]:
         if action_id == "time.now":
             now = datetime.datetime.now()
-            return {"speech": now.strftime("It's %H:%M on %A, %B %d.")}
+            return {"speech": now.strftime("It's %-I:%M %p on %A, %B %-d.")}
         if action_id == "system.status":
             h = {"stt": self.stt.component_status(), "tts": self.tts.component_status(),
                  "mediator": self.mediator.component_status()}
@@ -467,6 +678,11 @@ class Pipeline:
             return {"speech": self.mediator.last_reply or "I haven't said anything yet."}
         if action_id.startswith("memory.note"):
             return self._memory_note(action_id)
+        if action_id == "reminders.list":
+            items = self.reminders.list()
+            return {"reminders": items} if items else {"speech": "You have no reminders set."}
+        if action_id.startswith("reminders.cancel"):
+            return self.reminders.cancel(action_id.partition(":")[2])
         return {"error": f"unknown quick action {action_id}"}
 
     def _memory_note(self, action_id: str) -> dict[str, Any]:
@@ -478,12 +694,11 @@ class Pipeline:
             return {"error": "nothing to note"}
         if re.search(r"(api[_-]?key|token|secret|password)\s*[:=]", text, re.I):
             return {"error": "refusing to store something that looks like a secret"}
-        import datetime as _dt
         vault = self.cfg.path_for("vault")
         inbox = vault / "00-inbox"
         if not inbox.is_dir():
             return {"error": "vault inbox not found"}
-        ts = _dt.datetime.now()
+        ts = datetime.datetime.now()
         path = inbox / f"jarvis-note-{ts.strftime('%Y%m%d-%H%M%S')}.md"
         path.write_text(
             "---\n"
@@ -501,61 +716,81 @@ class Pipeline:
     # ------------------------------------------------------------- task events
     def _on_task_event(self, task: dict) -> None:
         """WorkerManager calls this on completion-grade transitions; the mediator
-        surfaces it on the next turn, and finished tasks are announced aloud."""
+        surfaces it on the next turn, and finished tasks are reported aloud in
+        plain speech (not the worker's raw output)."""
         self.mediator.notify_task_event(task)
-        # Mediator and worker share one model now, so a finished task leaves it
-        # resident. Kept as a cheap no-op guard: if the router idle-unloaded during
-        # a long task, this pays the reload here rather than under the next turn.
-        asyncio.get_running_loop().create_task(self.mediator.warmup())
+        loop = asyncio.get_running_loop()
+        loop.create_task(self.mediator.warmup())
         if task.get("status") in ("done", "failed", "needs_review"):
-            summary = task.get("result_summary") or ""
-            verdict = {"done": "finished", "failed": "failed",
-                       "needs_review": "finished but needs your review"}[task["status"]]
-            text = f"Task update: {task.get('title', 'a task')} {verdict}. {summary[:160]}"
-            asyncio.get_running_loop().create_task(self._announce(text))
+            loop.create_task(self._report_task(task))
+
+    async def _report_task(self, task: dict) -> None:
+        text = ""
+        summary = str(task.get("result_summary") or "")
+        report = getattr(self.mediator, "report_task", None)
+        if summary.startswith("Question:"):
+            # The worker is blocked on the user: ask, don't "report".
+            title = (task.get("title") or "that task").rstrip(".")
+            text = f"Quick question about {title}: {summary[len('Question:'):].strip()}"
+            report = None
+        if report is not None:
+            try:
+                text = await asyncio.wait_for(report(task), timeout=12.0)
+            except Exception:  # noqa: BLE001 — fall back to the template below
+                text = ""
+        if not text:
+            verdict = {"done": "is done", "failed": "failed",
+                       "needs_review": "finished, but needs your review"}.get(
+                task.get("status"), "changed")
+            summary = speakable(task.get("result_summary") or "")[:220]
+            text = f"{task.get('title') or 'Your task'} {verdict}. {summary}".strip()
+        await self._announce(text)
 
     def _drain_announcements(self) -> None:
         """Speak queued announcements once the floor is free (never drop them)."""
-        if self._announce_queue and not self._speaking and self.state in ("idle", "done"):
+        if self._announce_queue and not self._busy() and self.state in ("idle", "done", "listening"):
             text = self._announce_queue.pop(0)
             asyncio.get_running_loop().create_task(self._announce(text))
 
     async def _announce(self, text: str) -> None:
-        if self._speaking or self._turn_active or self.state not in ("idle", "done"):
+        user_talking = self.mode == "vad" and getattr(self.vad, "in_speech", False)
+        if self._busy() or user_talking or self.state not in ("idle", "done", "listening"):
             # Busy — queue instead of dropping; drained at end of the current turn.
             self._announce_queue.append(text)
             if len(self._announce_queue) > 5:
                 self._announce_queue = self._announce_queue[-5:]
             return
         # Same lock as run_turn: an announcement must never race a live turn's
-        # _tts_cancel/_speaking state (empty-reply hazard seen in quality battery).
+        # _tts_cancel/_speaking state.
         async with self._turn_lock:
             await self._announce_locked(text)
 
     async def _announce_locked(self, text: str) -> None:
+        text = plain_typography(text)
         self._tts_cancel = asyncio.Event()
+        cancel = self._tts_cancel
         turn_id = f"a{int(time.time() * 1000) % 10 ** 10}"
-        # Anything spoken is ALSO shown in the conversation log — no audio-only
-        # message the user can't scroll back to (goal #2 audio↔text completeness).
+        # Anything spoken is ALSO shown in the conversation log.
         self.bus.publish({"t": "mediator.delta", "text": text, "turn_id": turn_id,
                           "kind": "announcement"})
         self.bus.publish({"t": "mediator.done", "text": text, "turn_id": turn_id,
                           "kind": "announcement", "ms_first_token": 0, "ms_total": 0})
         self._set_state("speaking", detail="task announcement")
         self._speaking = True
+        self._remember_spoken(text)
         loop = asyncio.get_running_loop()
-        await self.tts.speak(text,
-                             on_chunk=lambda d, s: loop.call_soon_threadsafe(
-                                 self.bus.publish_binary,
-                                 {"t": "tts.chunk_hdr", "samples": s}, d),
-                             on_amp=lambda v: loop.call_soon_threadsafe(
-                                 self.bus.publish, {"t": "tts.amp", "v": round(v, 3)}),
-                             voice=self.cfg.tts.voice, speed=self.cfg.tts.speed,
-                             cancel_event=self._tts_cancel)
-        self._speaking = False
-        self.bus.publish({"t": "tts.end", "turn_id": turn_id})
-        self._set_state("idle")
+        on_chunk, on_amp = self._emit_audio(loop, cancel, turn_id)
+        try:
+            await self.tts.speak(speakable(text), on_chunk=on_chunk, on_amp=on_amp,
+                                 voice=self.cfg.tts.voice, speed=self.cfg.tts.speed,
+                                 cancel_event=cancel)
+            await self._wait_played(cancel)
+        finally:
+            if not cancel.is_set():
+                self._speaking = False
+                self.bus.publish({"t": "tts.end", "turn_id": turn_id})
+                self._set_state("listening" if self.mic_active and self.mode == "vad" else "idle")
         self._drain_announcements()
 
     def component_status(self) -> dict[str, Any]:
-        return {"ok": True, "detail": f"state={self.state} mode={self.mode}"}
+        return {"ok": True, "detail": f"state={self.state} mode={self.mode} vad={self.vad_label}"}

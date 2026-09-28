@@ -37,7 +37,6 @@ tar -tzf "$backup_file" | sed 's/^/[jarvis-voice]   \//'
 
 jarvis_log "step 1/2: bootout LaunchAgents"
 jarvis_agent_bootout "$JARVISD_LABEL"
-jarvis_agent_bootout "$DASHBOARD_LABEL"
 
 jarvis_log "step 2/2: restore tarball"
 tar -xzf "$backup_file" -C /
@@ -45,9 +44,9 @@ tar -xzf "$backup_file" -C /
 echo
 jarvis_log "=== rollback complete ==="
 jarvis_log "restored from: ${backup_file}"
-jarvis_log "both LaunchAgents are currently booted out (stopped)."
+jarvis_log "the jarvisd LaunchAgent is currently booted out (stopped)."
 jarvis_log "next steps:"
 jarvis_log "  - inspect the restored files above if unsure what came back"
-jarvis_log "  - re-run scripts/install.sh to bootstrap the (now-restored) LaunchAgents, or"
-jarvis_log "  - manually: launchctl bootstrap gui/\$(id -u) ${JARVIS_LAUNCHAGENTS_DIR}/<label>.plist"
+jarvis_log "  - re-run scripts/install.sh to bootstrap the (now-restored) LaunchAgent, or"
+jarvis_log "  - manually: launchctl bootstrap gui/\$(id -u) ${JARVIS_LAUNCHAGENTS_DIR}/${JARVISD_LABEL}.plist"
 jarvis_log "  - scripts/status.sh to verify current state"

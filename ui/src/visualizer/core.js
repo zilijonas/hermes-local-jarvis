@@ -417,7 +417,7 @@ export function createCore(canvas) {
         a = (i / n) * Math.PI * 2 - Math.PI / 2;
         var band = Math.abs(Math.sin(i * 1.7 + t * 6.1)) * 0.5 + Math.abs(Math.sin(i * 0.9 + t * 11.3)) * 0.5;
         if (levels) {
-          var vertical = (Math.sin(a) + 1) / 2; // 0 = top of the ring … 1 = bottom
+          var vertical = (Math.sin(a) + 1) / 2; // 0 = top of the ring  1 = bottom
           var spec = (levels.low || 0) * vertical + (levels.mid || 0) * (1 - Math.abs(vertical - 0.5) * 2) + (levels.high || 0) * (1 - vertical);
           band *= 0.4 + 1.1 * clamp01(spec);
         }

@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
+import uuid
 from typing import Any, Awaitable, Callable, Optional
 
 import httpx
@@ -35,14 +37,118 @@ _JSON_LINE = re.compile(r"^\s*\{.*\}\s*$", re.S)
 MetaToolHandler = Callable[[str, dict], Awaitable[dict[str, Any]]]
 
 VALID_TOOLS = {"memory_recall", "capability_search", "quick_action",
-               "delegate_task", "task_status", "task_control"}
+               "delegate_task", "deep_answer", "set_reminder", "task_status",
+               "task_control"}
+
+BRAINS = ("local", "cloud")
+_DEFAULT_ENV_FILE = os.path.expanduser("~/.hermes/.env")
+_CLOUD_USER_AGENT = "jarvisd/1.0"
+
+
+def _read_env_key(name: str, path: Optional[str] = None) -> Optional[str]:
+    """Best-effort KEY=value lookup: process env first, then a flat .env file
+    (read-only, never written). Mirrors jev-router's client._read_key_from_env_file
+    (macmini-hermes-agent/hermes-plugins/jev-router/client.py) -- the OpenCode Go
+    key (OPENCODE_GO_API_KEY) lives in the DEFAULT profile's ~/.hermes/.env, not
+    jarvisd's own (deliberately key-free) env.
+
+    `path` defaults to the module-level `_DEFAULT_ENV_FILE`, looked up here (not
+    bound at def time) so tests can monkeypatch the module attribute.
+    """
+    val = os.environ.get(name)
+    if val:
+        return val
+    path = path or _DEFAULT_ENV_FILE
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                if k.strip() != name:
+                    continue
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                    v = v[1:-1]
+                return v or None
+    except OSError:
+        pass
+    return None
+
+
+def opencode_go_configured() -> bool:
+    """Cheap, no-token check: is there a usable OpenCode Go key at all?"""
+    return bool(_read_env_key("OPENCODE_GO_API_KEY"))
+
+
+class _BrainFailure(Exception):
+    """Raised only for a pre-first-token failure of a brain's stream -- the
+    signal that triggers the one-shot same-turn fallback to the other brain."""
+
+
+class ThinkStripper:
+    """Incrementally strips <think>...</think> spans from a streamed text.
+
+    Some OpenCode Go models (minimax-m3) put chain-of-thought INSIDE the
+    content channel instead of a separate reasoning field -- that must never
+    reach on_delta/TTS. Handles a span split across chunk boundaries, and an
+    UNTERMINATED leading span (all reasoning, cut short by max_tokens): that
+    case must yield nothing at all, ever.
+    """
+
+    _OPEN = "<think>"
+    _CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self.in_think = False
+        self._pending = ""
+
+    def feed(self, chunk: str) -> str:
+        self._pending += chunk
+        out = ""
+        while True:
+            if self.in_think:
+                idx = self._pending.find(self._CLOSE)
+                if idx == -1:
+                    # Might be a split close tag -- hold back a small tail.
+                    keep = min(len(self._pending), len(self._CLOSE) - 1)
+                    self._pending = self._pending[len(self._pending) - keep:]
+                    break
+                self._pending = self._pending[idx + len(self._CLOSE):]
+                self.in_think = False
+                continue
+            idx = self._pending.find(self._OPEN)
+            if idx == -1:
+                # No open tag (yet) -- keep enough tail in case it's split.
+                safe_len = max(0, len(self._pending) - (len(self._OPEN) - 1))
+                out += self._pending[:safe_len]
+                self._pending = self._pending[safe_len:]
+                break
+            out += self._pending[:idx]
+            self._pending = self._pending[idx + len(self._OPEN):]
+            self.in_think = True
+            continue
+        return out
+
+    def flush(self) -> str:
+        """Call once the stream ends. Prose held back only for tag-boundary
+        safety is returned; an unterminated open span is dropped, never spoken."""
+        if self.in_think:
+            self._pending = ""
+            return ""
+        out, self._pending = self._pending, ""
+        return out
 
 
 class Mediator:
     def __init__(self, ollama_url: str, model: str, num_ctx: int = 8192,
                  keep_alive: str = "30m", history_turns: int = 12,
                  temperature: float = 0.4, think: bool = False,
-                 native: bool = False, max_tokens: int = 512):
+                 native: bool = False, max_tokens: int = 512,
+                 brain: str = "local", cloud_model: str = "deepseek-v4.1-flash",
+                 cloud_url: str = "https://opencode.ai/zen/go/v1/chat/completions",
+                 deep_model: str = "minimax-m3"):
         self.url = ollama_url.rstrip("/")
         self.model = model
         # native=True -> OpenAI endpoint + real tool schemas (see module docstring).
@@ -71,6 +177,14 @@ class Mediator:
         self.last_reply = ""
         self._partial_spoken = ""
         self._last_call: dict | None = None   # native tool call awaiting its result
+        # Two-brain support (SPEC §Brains): "local" = this router/model above;
+        # "cloud" = OpenCode Go (deep_model/cloud_model below), same native tool
+        # calling either way. Runtime-switchable via /brains -> set_brain().
+        self.brain = brain if brain in BRAINS else "local"
+        self.cloud_model = cloud_model
+        self.cloud_url = cloud_url
+        self.deep_model = deep_model
+        self.session_id = f"jarvis-{uuid.uuid4().hex[:12]}"
 
     # ------------------------------------------------------------------
     def notify_task_event(self, task: dict) -> None:
@@ -95,9 +209,21 @@ class Mediator:
         self.pending_events.clear()
         self.last_reply = ""
         self._partial_spoken = ""
+        self.session_id = f"jarvis-{uuid.uuid4().hex[:12]}"
+
+    def set_brain(self, brain: str) -> dict[str, Any]:
+        """Live-switch the active brain (called by POST /brains). Takes effect
+        on the NEXT turn -- nothing in-flight is interrupted."""
+        if brain not in BRAINS:
+            return {"ok": False, "error": f"unknown brain {brain}"}
+        self.brain = brain
+        return {"ok": True, "brain": brain}
 
     def component_status(self) -> dict[str, Any]:
-        return {"ok": True, "detail": f"{self.model}, {len(self.history) // 2} turns held"}
+        model = self.cloud_model if self.brain == "cloud" else self.model
+        return {"ok": True, "detail": f"{self.brain} brain: {model} "
+                                      f"(fallback: {self.model if self.brain == 'cloud' else self.cloud_model}), "
+                                      f"{len(self.history) // 2} turns held"}
 
     async def warmup(self) -> bool:
         try:
@@ -274,6 +400,65 @@ class Mediator:
 
     # ------------------------------------------------------------------
     async def _stream(self, msgs: list[dict], cancel: asyncio.Event, fmt=None):
+        """Stream one hop on the active brain (self.brain). If that brain fails
+        before producing any token -- connect error, HTTP error, or nothing
+        within the brain's first-token budget (6s cloud / 10s local) -- retry
+        the SAME hop once on the OTHER brain. Once a token has been yielded,
+        a later failure is NOT a brain failure (something was already spoken);
+        it propagates like any other mid-stream error. Publishes nothing of its
+        own; the caller's on_delta already sees every yielded delta as normal.
+        """
+        brain = self.brain
+        other = "local" if brain == "cloud" else "cloud"
+        try:
+            async for delta in self._guarded_stream(brain, msgs, cancel, fmt,
+                                                    6.0 if brain == "cloud" else 10.0):
+                yield delta
+            return
+        except _BrainFailure:
+            pass
+        if cancel.is_set():
+            return
+        try:
+            async for delta in self._guarded_stream(other, msgs, cancel, fmt,
+                                                    6.0 if other == "cloud" else 10.0):
+                yield delta
+        except _BrainFailure:
+            return  # both brains failed before any token -- caller sees an empty buf
+
+    async def _guarded_stream(self, brain: str, msgs: list[dict], cancel: asyncio.Event,
+                              fmt, timeout_s: float):
+        """Wrap `_raw_stream` so a pre-first-token failure raises _BrainFailure
+        instead of propagating -- the signal `_stream` retries on. Deliberately
+        does NOT cancel the underlying generator's task on timeout via
+        asyncio.wait_for's cancellation semantics for anything past the first
+        token; only the very first `__anext__()` is time-boxed."""
+        gen = self._raw_stream(brain, msgs, cancel, fmt)
+        try:
+            first = await asyncio.wait_for(gen.__anext__(), timeout=timeout_s)
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError as e:
+            await gen.aclose()
+            raise _BrainFailure(f"{brain}: no token within {timeout_s}s") from e
+        except Exception as e:  # noqa: BLE001 — ANY pre-first-token failure (missing
+            # key, connect error, HTTP error, malformed setup, ...) is a brain
+            # failure worth the same-turn fallback; nothing has been spoken yet.
+            await gen.aclose()
+            raise _BrainFailure(f"{brain}: {e}") from e
+        yield first
+        async for delta in gen:
+            yield delta
+
+    async def _raw_stream(self, brain: str, msgs: list[dict], cancel: asyncio.Event, fmt=None):
+        if brain == "cloud":
+            async for delta in self._stream_cloud(msgs, cancel):
+                yield delta
+        else:
+            async for delta in self._stream_local(msgs, cancel, fmt):
+                yield delta
+
+    async def _stream_local(self, msgs: list[dict], cancel: asyncio.Event, fmt=None):
         if self.native:
             async for delta in self._stream_openai(msgs, cancel):
                 yield delta
@@ -310,7 +495,7 @@ class Mediator:
                     yield delta
 
     async def _stream_openai(self, msgs: list[dict], cancel: asyncio.Event):
-        """Stream from an OpenAI-compatible endpoint with real tool schemas.
+        """Stream from the LOCAL OpenAI-compatible router with real tool schemas.
 
         Content deltas are yielded as they arrive so TTS starts early. Reasoning
         deltas are dropped — they must never reach the speaker. A tool call is
@@ -364,6 +549,182 @@ class Mediator:
             # Leading newline when prose came first: _speakable_prefix splits on
             # a `{` at line start, so without it the JSON would be spoken aloud.
             yield ("\n" if spoke else "") + json.dumps({"tool": name, "args": args})
+
+    async def _stream_cloud(self, msgs: list[dict], cancel: asyncio.Event):
+        """Stream from OpenCode Go (cloud brain) with real tool schemas.
+
+        Every request needs `x-opencode-session` (else HTTP 400) and a
+        non-Python User-Agent (Cloudflare 403s the default urllib/httpx UA) --
+        both verified live 2026-09-28. <think>...</think> spans some Go models
+        (minimax-m3) put INSIDE the content channel are stripped by a
+        ThinkStripper before anything is yielded -- they must never be spoken.
+        """
+        key = _read_env_key("OPENCODE_GO_API_KEY")
+        if not key:
+            raise RuntimeError("OPENCODE_GO_API_KEY not configured")
+        headers = {"Authorization": f"Bearer {key}", "User-Agent": _CLOUD_USER_AGENT,
+                   "x-opencode-session": self.session_id}
+        payload = {"model": self.cloud_model, "messages": msgs, "stream": True,
+                   "temperature": self.temperature,
+                   "max_tokens": self.max_tokens,
+                   "tools": NATIVE_TOOLS}
+        name, arg_buf, spoke, call_id = None, "", False, None
+        stripper = ThinkStripper()
+        async with self._client.stream(
+                "POST", self.cloud_url, json=payload, headers=headers) as r:
+            r.raise_for_status()
+            async for line in r.aiter_lines():
+                if cancel.is_set():
+                    break
+                line = line.strip()
+                if not line.startswith("data:"):
+                    continue
+                body = line[5:].strip()
+                if body == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(body)
+                except json.JSONDecodeError:
+                    continue
+                for choice in chunk.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    for tc in (delta.get("tool_calls") or []):
+                        fn = tc.get("function") or {}
+                        name = fn.get("name") or name
+                        call_id = tc.get("id") or call_id
+                        arg_buf += fn.get("arguments") or ""
+                    raw_text = delta.get("content") or ""
+                    if raw_text:
+                        clean = stripper.feed(raw_text)
+                        if clean:
+                            spoke = True
+                            yield clean
+        tail = stripper.flush()
+        if tail:
+            spoke = True
+            yield tail
+        if name and not cancel.is_set():
+            try:
+                args = json.loads(arg_buf) if arg_buf.strip() else {}
+            except json.JSONDecodeError:
+                args = {}
+            self._last_call = {"id": call_id or "call_0", "name": name,
+                               "arguments": arg_buf or "{}"}
+            yield ("\n" if spoke else "") + json.dumps({"tool": name, "args": args})
+
+    # ------------------------------------------------------------ one-shot calls
+    async def _complete_no_tools(self, brain: str, prompt: str, max_tokens: int,
+                                 timeout_s: float, model_override: Optional[str] = None) -> str:
+        """One-shot, tool-free, non-streaming completion on the given brain --
+        used by deep_answer and report_task, which are short synchronous
+        asides, not the voice turn's token-by-token path. Raises on any
+        failure (bad key, HTTP error, timeout); callers decide the fallback.
+        <think> spans are stripped before the text is returned.
+        """
+        msgs = [{"role": "user", "content": prompt}]
+        if brain == "cloud":
+            key = _read_env_key("OPENCODE_GO_API_KEY")
+            if not key:
+                raise RuntimeError("OPENCODE_GO_API_KEY not configured")
+            url = self.cloud_url
+            model = model_override or self.cloud_model
+            headers = {"Authorization": f"Bearer {key}", "User-Agent": _CLOUD_USER_AGENT,
+                       "x-opencode-session": self.session_id}
+            payload = {"model": model, "messages": msgs, "stream": False,
+                       "max_tokens": max_tokens}
+        elif self.native:
+            url = f"{self.url}/v1/chat/completions"
+            model = model_override or self.model
+            headers = {}
+            payload = {"model": model, "messages": msgs, "stream": False,
+                       "max_tokens": max_tokens}
+        else:
+            url = f"{self.url}/api/chat"
+            model = model_override or self.model
+            headers = {}
+            payload = {"model": model, "messages": msgs, "stream": False,
+                       "think": False, "options": {"num_predict": max_tokens}}
+        r = await self._client.post(url, json=payload, headers=headers,
+                                    timeout=httpx.Timeout(timeout_s, connect=5.0))
+        r.raise_for_status()
+        data = r.json()
+        if brain == "cloud" or self.native:
+            content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        else:
+            content = (data.get("message") or {}).get("content") or ""
+        stripper = ThinkStripper()
+        return (stripper.feed(content) + stripper.flush()).strip()
+
+    async def deep_answer(self, question: str) -> dict[str, Any]:
+        """Meta-tool handler: a synchronous call to a strong cloud model
+        (config brain.deep_model, default minimax-m3) for a hard-reasoning or
+        broad-knowledge question that does NOT need live data or a real
+        action -- delegate_task is for that. No tools, <think> stripped,
+        answered in <=4 spoken sentences, 25s hard timeout.
+
+        Contract: the pipeline dispatches unknown tool names via its own
+        dispatcher (jarvisd/pipeline.py `_dispatch_meta_tool`), so this is
+        called from there as:
+            if name == "deep_answer": return await self.mediator.deep_answer(**args)
+        Returns {"answer": str} on success, {"error": str} on any failure --
+        never raises.
+        """
+        question = str(question or "").strip()[:1000]
+        if not question:
+            return {"error": "question required"}
+        prompt = ("Answer in one to three short spoken sentences (more only if the question asks for detail): plain speech, "
+                  "no markdown, no lists.\n\nQuestion: " + question)
+        try:
+            answer = await asyncio.wait_for(
+                self._complete_no_tools("cloud", prompt, max_tokens=400, timeout_s=25.0,
+                                        model_override=self.deep_model),
+                timeout=25.0)
+            if not answer:
+                return {"error": "deep_answer returned no content"}
+            return {"answer": answer}
+        except Exception as e:  # noqa: BLE001 — a tool handler must never raise
+            return {"error": f"deep_answer failed: {e}"}
+
+    async def report_task(self, task: dict) -> str:
+        """Turn a finished background task into a natural 1-2 sentence spoken
+        report, using the ACTIVE brain, no tools, 8s hard timeout.
+
+        Contract: called by the pipeline (jarvisd/pipeline.py's `_on_task_event`
+        owns the finished-task announcement) once a WorkerManager task reaches a
+        terminal status, to produce the text it speaks/announces -- NOT part of
+        the tool-dispatch loop. `task` is the same dict shape
+        WorkerManager._brief()/db.get_task() produce: at minimum `status`, and
+        `goal` or `title`; `result_summary` and `result_text` are used when
+        present. Never raises -- on any failure (brain down, timeout, empty
+        reply) it falls back to a sanitized template sentence built purely from
+        those fields, so a report is always produced.
+        """
+        status = task.get("status", "unknown")
+        goal = str(task.get("goal") or task.get("title") or "the task").strip()
+        summary = str(task.get("result_summary") or "").strip()
+        tail = str(task.get("result_text") or "")[-800:]
+        verdict = {"done": "finished successfully", "failed": "failed",
+                   "needs_review": "finished but needs review",
+                   "canceled": "was canceled"}.get(status, status)
+        fallback_text = f"{goal[:200].rstrip('.')}. {verdict}."
+        if summary:
+            fallback_text += f" {summary[:200]}"
+        fallback_text = re.sub(r"\s+", " ", fallback_text).strip()
+        prompt = (f"A background task just {verdict}. Goal: {goal!r}. "
+                  f"Summary: {summary or 'none'}. Recent output: {tail or 'none'}\n\n"
+                  "Report this to the user in one short natural spoken sentence (two only if needed): plain "
+                  "speech, no markdown, key facts and numbers only, honest about "
+                  "failure if it failed.")
+        try:
+            text = await asyncio.wait_for(
+                self._complete_no_tools(self.brain, prompt, max_tokens=200, timeout_s=8.0),
+                timeout=8.0)
+            text = text.strip()
+            if not text or text.startswith("{"):
+                return fallback_text
+            return text
+        except Exception:  # noqa: BLE001 — a report must always come back
+            return fallback_text
 
     @staticmethod
     def _speakable_prefix(buf: str) -> str:

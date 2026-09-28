@@ -1,3 +1,11 @@
+> **Historical (pre 2026-09-28).** This plan predates the 2026-09-28
+> overhaul: "Mediator stays gemma" is no longer true (mediator is now a
+> cloud/local brain pair, see `ARCHITECTURE.md` §Brains), and the local
+> backend no longer runs `-p jarvis-voice` (that profile was removed, see
+> `docs/hermes-profiles-sessions.md`). The backend selector concept itself
+> (local/cloud/codex/claude, `GET/POST /backends`) shipped and is current.
+> Check `docs/SPEC.md` §Worker execution for the actual contract.
+
 # Worker-backend selector + credit gauges — agreed plan (2026-07-29)
 
 Agreed with Linas; implementation lands when the updated design arrives.

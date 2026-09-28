@@ -38,6 +38,10 @@ class EventBus:
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._subscribers.discard(q)
 
+    def has_listeners(self) -> bool:
+        """True while at least one WS client is connected (someone hears the audio)."""
+        return bool(self._subscribers)
+
     def publish(self, event: dict[str, Any]) -> None:
         event.setdefault("ts", time.time())
         self._send(event)

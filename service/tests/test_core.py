@@ -26,7 +26,7 @@ def test_config_defaults_when_file_missing(tmp_path):
     # delegated task cannot evict the thing that has to keep talking.
     assert cfg.data["ollama"]["worker"] == cfg.data["ollama"]["mediator"]
     assert cfg.data["ollama"]["mediator_native"] is True
-    assert cfg.path_for("hermes_home") == Path("~/.hermes/profiles/jarvis-voice").expanduser()
+    assert cfg.path_for("hermes_home") == Path("~/ai/state/jarvis-voice").expanduser()
 
 
 def test_config_save_and_reload_roundtrip(tmp_path):
@@ -54,7 +54,7 @@ def test_config_attribute_style_section_access(tmp_path):
     # The voice pipeline (jarvisd/pipeline.py) reads config as cfg.vad.aggressiveness etc.,
     # not just cfg.data["vad"]["aggressiveness"] — both must work against the same live data.
     cfg = config_mod.load_config(tmp_path / "missing.toml")
-    assert cfg.vad.aggressiveness == cfg.data["vad"]["aggressiveness"] == 2
+    assert cfg.vad.max_pause_ms == cfg.data["vad"]["max_pause_ms"] == 1800
     assert cfg.tts.voice == "am_michael"
     assert cfg.budgets.context_card_tokens == 600
     with pytest.raises(AttributeError):
@@ -206,7 +206,7 @@ def test_health_config_tasks_endpoints(tmp_path):
         assert r.status_code == 200
         assert r.json()["tts"]["voice"] == "af_bella"
         # persisted to disk
-        assert "af_bella" in (tmp_path / "jarvisd.toml").read_text()
+        assert "af_bella" in (tmp_path / "jarvisd.settings.toml").read_text()  # runtime overlay
 
         r = client.get("/tasks")
         assert r.status_code == 200
@@ -291,3 +291,13 @@ def test_ws_multiple_clients_both_get_events(tmp_path):
             app.state.bus.publish({"t": "state", "value": "listening"})
             assert ws1.receive_json()["value"] == "listening"
             assert ws2.receive_json()["value"] == "listening"
+
+
+def test_runtime_save_goes_to_overlay_not_tracked_toml(tmp_path):
+    cfg_file = tmp_path / "jarvisd.toml"
+    cfg_file.write_text('# keep me\n[worker]\nbackend = "cloud"\n')
+    cfg = config_mod.load_config(cfg_file)
+    cfg.save({"worker": {"backend": "claude"}})
+    assert cfg_file.read_text().startswith("# keep me")          # tracked file untouched
+    assert config_mod.load_config(cfg_file).data["worker"]["backend"] == "claude"  # overlay wins
+    assert cfg.settings_path.name == "jarvisd.settings.toml"

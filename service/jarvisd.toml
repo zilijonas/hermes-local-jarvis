@@ -2,15 +2,14 @@
 host = "127.0.0.1"
 port = 9140
 
+# Runtime choices made in the UI (brain, worker backend, voice) are NOT written
+# here: they go to ~/ai/state/jarvis-voice/settings.toml, merged over this file.
+
 [ollama]
 url = "http://127.0.0.1:11434"          # still used for the embedding model
-# One model serves both roles (measured 2026-08-30, see docs/VOICE_MODEL_ABX.md).
-# Gemma E4B was the faster talker (0.48s vs 0.89s to first spoken word) but got
-# only 5/10 on the mediator's own routing contract -- it invented the clock time
-# rather than calling time.now, and said "I'll remember that" without ever
-# calling memory.note, silently losing the fact. gpt-oss scores 8/10 at the same
-# tool-turn latency, and sharing one model with the worker removes the eviction
-# that used to cost a 6.5s cold reload after every delegated task.
+# The LOCAL brain and the local worker: gpt-oss-20b via the model router. Measured
+# 2026-08-30 it beat Gemma E4B on the routing contract (8/10 vs 5/10: Gemma
+# invented the clock time and "remembered" facts it never saved).
 mediator = "gpt-oss-20b-mxfp4"
 mediator_url = "http://127.0.0.1:8090"  # model router
 mediator_native = true                   # real tool schemas, not the JSON line
@@ -20,25 +19,39 @@ mediator_num_ctx = 8192
 keep_alive = "30m"
 
 [stt]
+# Parakeet-TDT 0.6B v2 on MLX: ~150 ms per utterance, 2x more noise-robust than
+# whisper base.en (bench 2026-09-28). `model` is the faster-whisper fallback.
+engine = "parakeet"
+parakeet_model = "mlx-community/parakeet-tdt-0.6b-v2"
 model = "base.en"
 compute = "int8"
 device = "cpu"
-partial_interval_ms = 600
+partial_interval_ms = 400
 
 [vad]
-aggressiveness = 3
-endpoint_ms = 500
+# Hands-free: Silero VAD + Smart Turn v3 decide when you finished. After quiet_ms
+# of silence Smart Turn is asked; "not finished" keeps listening up to max_pause_ms.
+engine = "smart_turn"
+quiet_ms = 250
+max_pause_ms = 1800
+turn_threshold = 0.5
 min_speech_ms = 200
+endpoint_ms = 800          # webrtcvad fallback only
+aggressiveness = 3         # webrtcvad fallback only
+silero_model = "~/ai/models/silero/silero_vad.onnx"
+smart_turn_model = "~/ai/models/smart-turn/smart-turn-v3.2-cpu.onnx"
 
 [tts]
-voice = "am_michael"
+voice = "am_michael"       # Linas's pick (2026-07-27)
 speed = 1.1
 engine = "kokoro"
 fallback = "say"
+tool_acks = true           # "On it." the moment a slow tool starts
 
 [paths]
 vault = "~/ai/memory/obsidian-vault"
-hermes_home = "~/.hermes/profiles/jarvis-voice"
+hermes_home = "~/ai/state/jarvis-voice"                  # jarvis.db + logs (historical key name)
+worker_home = "~/ai/state/jarvis-voice/hermes-home"      # lean HERMES_HOME for the local worker
 models = "~/ai/models"
 
 [budgets]
@@ -46,4 +59,21 @@ context_card_tokens = 600
 mediator_history_turns = 6
 
 [worker]
-backend = "local"
+# cloud = `hermes -p default -z` (codecloud: OpenCode Go + jev-router), the full
+# Hermes agent; ~5 s for a disk check vs 30-60 s on the local gpt-oss worker.
+# Infra failures (429/5xx/network) retry once on local. codex/claude only run
+# when the user names them.
+backend = "cloud"
+# [] = the default profile's own toolsets. An explicit list goes through `-t`,
+# which in oneshot mode drops plugin toolsets such as mail.
+cloud_toolsets = []
+timeout_s = 900
+
+[brain]
+# Measured 2026-09-28: cloud 1.3-1.9 s to first token, 12/12 on the quality
+# battery; local 1.5-12 s under GPU contention, 8-10/12. Each is the other's
+# automatic per-turn fallback.
+active = "cloud"
+cloud_model = "deepseek-v4.1-flash"
+cloud_url = "https://opencode.ai/zen/go/v1/chat/completions"
+deep_model = "minimax-m3"   # deep_answer: hard reasoning / broad knowledge

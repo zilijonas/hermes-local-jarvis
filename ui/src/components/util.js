@@ -27,12 +27,12 @@ var STATUS_TONE = {
   canceled: "neutral",
 };
 export function statusMeta(status) {
-  return { label: (status || "—").replace(/_/g, " "), tone: STATUS_TONE[status] || "neutral" };
+  return { label: (status || "-").replace(/_/g, " "), tone: STATUS_TONE[status] || "neutral" };
 }
 
 // worker identity tag (GRANITE / CODEX) -> {label, tone}
 export function workerMeta(kind) {
-  return { label: (kind || "").toUpperCase() || "—", tone: kind === "codex" ? "info" : "neutral" };
+  return { label: (kind || "").toUpperCase() || "-", tone: kind === "codex" ? "info" : "neutral" };
 }
 
 // activity/task-event tone -> UI tone name

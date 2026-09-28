@@ -71,30 +71,30 @@ def _shape(raw: dict[str, Any]) -> dict[str, Any]:
     out["local"] = {"available": True, "tier": "free", "gauges": [],
                       "note": "on-device · free", "phase": "ok"}
 
-    # cloud — OpenRouter. The user's key carries a WEEKLY spend limit:
-    # `limit_usd` is the weekly cap and `remaining_usd` is what's left THIS week
-    # (starts at the cap, drains per call, resets weekly). `usage_usd` is
-    # LIFETIME spend — never mix it into the weekly fraction (that was the
-    # "0% left" bug: lifetime $16.57 vs a $4 weekly cap).
-    o = prov.get("openrouter")
+    # cloud — Hermes "codecloud" (OpenCode Go + jev-router), the default
+    # profile since 2026-09-26. This used to read OpenRouter spend, which was
+    # wrong once the default profile moved off it (2026-09-28). Go reports
+    # workspace-wide percent-used windows (rolling/weekly/monthly), not a
+    # dollar balance -- prefer weekly, then rolling, then monthly.
+    o = prov.get("opencode_go")
     if o and o.get("configured") and o.get("ok", True) and o.get("error") is None:
-        limit = o.get("limit_usd")
-        rem = o.get("remaining_usd")
-        used = o.get("usage_usd") or 0.0
-        if limit and rem is not None:
-            pct = max(0.0, min(1.0, rem / limit))
-            out["cloud"] = {"available": True, "tier": "limit", "phase": "ok",
-                            "note": "resets weekly",
-                            "gauges": [{"label": "weekly", "remaining_pct": pct,
-                                        "value_label": f"${rem:.2f} of ${limit:.2f}",
-                                        "reset_epoch": None}]}
-        else:  # no cap configured — pay-as-you-go, show lifetime spend, no needle
-            out["cloud"] = {"available": True, "tier": "limit", "phase": "ok",
-                            "note": "pay-as-you-go",
-                            "gauges": [{"label": "spent", "remaining_pct": None,
-                                        "value_label": f"${used:.2f} used", "reset_epoch": None}]}
+        for label in ("weekly", "rolling", "monthly"):
+            window = o.get(label)
+            if window and window.get("used_percent") is not None:
+                used = window["used_percent"]
+                pct = max(0.0, min(1.0, 1.0 - (used / 100.0)))
+                out["cloud"] = {"available": True, "tier": "sub", "phase": "ok",
+                                "note": "Hermes codecloud (OpenCode Go)",
+                                "gauges": [{"label": label, "remaining_pct": pct,
+                                            "value_label": f"{round(100 - used)}% left",
+                                            "reset_epoch": window.get("resets_at")}]}
+                break
+        else:
+            out["cloud"] = {"available": True, "tier": "sub", "phase": "ok",
+                            "note": "Hermes codecloud (OpenCode Go) · usage not exposed",
+                            "gauges": []}
     else:
-        out["cloud"] = {"available": False, "tier": "limit", "gauges": [],
+        out["cloud"] = {"available": False, "tier": "sub", "gauges": [],
                         "note": "not linked", "phase": "unavailable"}
 
     # codex — ChatGPT sub. Real API rejects the subscription OAuth token, so

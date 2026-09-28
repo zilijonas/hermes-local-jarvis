@@ -17,6 +17,7 @@ import { API_BASE } from "./sdk.js";
 export var TASKS_URL = API_BASE + "/tasks";
 export var BACKENDS_URL = API_BASE + "/backends";
 export var CREDITS_URL = API_BASE + "/credits";
+export var BRAINS_URL = API_BASE + "/brains";
 
 export function taskDetailUrl(id) {
   return API_BASE + "/tasks/" + encodeURIComponent(id);
@@ -153,4 +154,51 @@ export function useRefreshCredits() {
 export function useMemorySearch(query, k) {
   var q = (query || "").trim();
   return UI.useEndpoint(q ? memorySearchUrl(q, k || 8) : null);
+}
+
+/** GET /brains -> {active, brains:[{id,label,detail,available}]}, shared+
+ * cached, mount/reconnect only (protocol v2; see components/brain.js). */
+export function useBrains() {
+  return UI.useEndpoint(BRAINS_URL);
+}
+
+/** Merge a `brain.changed` WS event into the shared /brains cache — called
+ * from app.js's onEvent (not a hook), same pattern as mergeTaskUpdate. */
+export function mergeBrainChanged(msg) {
+  UI.mutate(BRAINS_URL, function (prev) {
+    return Object.assign({}, prev, { active: msg.brain });
+  });
+}
+
+/** POST /brains {brain}. Optimistic, same shape as useSelectBackend: the
+ * cache flips to the picked id immediately and reverts on failure. */
+export function useSelectBrain() {
+  return UI.useAction(
+    function (id) {
+      var reverted = null;
+      UI.mutate(BRAINS_URL, function (prev) {
+        reverted = prev && prev.active;
+        return Object.assign({}, prev, { active: id });
+      });
+      return UI.postJSON(BRAINS_URL, { brain: id }).then(
+        function (data) {
+          UI.mutate(BRAINS_URL, function (prev) {
+            return Object.assign({}, prev, { active: (data && data.brain) || id });
+          });
+          return data;
+        },
+        function (err) {
+          UI.mutate(BRAINS_URL, function (prev) {
+            return Object.assign({}, prev, { active: reverted });
+          });
+          throw err;
+        }
+      );
+    },
+    {
+      onError: function (err) {
+        UI.toast.error("Couldn't switch brain", { detail: UI.errorMessage(err) });
+      },
+    }
+  );
 }

@@ -32,7 +32,9 @@
 
   Query params: ?vis=1 · ?state=<name> · ?demo=1 (auto-run turn) · ?w=390
 -->
-<link rel="stylesheet" href="../hermes-plugin/dashboard/dist/style.css" />
+<!-- No plugin stylesheet anymore (see README §Styling) — all chrome comes
+     from window.HermesUI's own dist/hui/hermes-ui.css, injected by boot.js
+     as part of the real bundle load below. -->
 <style>
   html, body { margin: 0; height: 100%; background: #04070a; color: #9FB6BA;
     font-family: -apple-system, system-ui, sans-serif; overflow: hidden; }
@@ -69,6 +71,12 @@
   <button id="hz-error">error (turn failed)</button>
   <button id="hz-nospeech">no speech</button>
   <button id="hz-timeout">turn timed out</button>
+  <button id="hz-pending">turn.pending</button>
+  <button id="hz-vad-on">vad.speech on</button>
+  <button id="hz-vad-off">vad.speech off</button>
+  <button id="hz-merge">stt.final merged</button>
+  <button id="hz-server-bargein">tts.end interrupted</button>
+  <button id="hz-brain">brain.changed</button>
   <button id="hz-offline">go offline</button>
   <div class="hz-sep"></div>
   <span class="hz-tag" style="width:auto">WIDTH</span>
@@ -132,7 +140,19 @@
   // worker-backend selector + credit gauges (spec §06) — same shapes as the
   // live GET /backends and GET /credits endpoints. ?credits=stale forces the
   // stale presentation; ?credits=unlinked marks every backend unavailable.
-  var BACKENDS_STATE = { active: "granite", available: { granite: true, cloud: true, codex: true, claude: true } };
+  var BACKENDS_STATE = {
+    active: "granite",
+    available: { granite: true, cloud: true, codex: true, claude: true },
+    labels: { granite: "Granite (harness label)", cloud: "Cloud (harness label)", codex: "Codex", claude: "Claude Code" },
+  };
+  // protocol v2: GET/POST /brains
+  var BRAINS_STATE = {
+    active: "fast",
+    brains: [
+      { id: "fast", label: "Fast · local", detail: "gpt-oss-20b · on-box · no spend", available: true },
+      { id: "smart", label: "Smart · cloud", detail: "claude · cloud · uses limit", available: true },
+    ],
+  };
   function creditsPayload(refresh) {
     var demo = params.get("credits");
     var mk = function (b) {
@@ -279,7 +299,22 @@
   window.fetch = function (url, opts) {
     var u = String(url);
     function json(obj) {
-      return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve(obj); } });
+      // Must look enough like a real fetch Response for window.HermesUI's
+      // own data layer (hermes-ui/src/hooks/data.js defaultFetch reads
+      // res.headers.get("content-type") on every request) — a stub missing
+      // .headers throws "Cannot read properties of undefined (reading
+      // 'get')" on EVERY useEndpoint call, which the library then quietly
+      // retries 4x and settles into "Reconnecting, attempt N" forever. This
+      // was already broken before protocol v2 for every endpoint (tasks,
+      // backends, credits, memory) — just never exercised, since the
+      // harness's window.HermesUI boot was itself broken (see boot() below).
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: function (name) { return String(name).toLowerCase() === "content-type" ? "application/json" : null; } },
+        json: function () { return Promise.resolve(obj); },
+        text: function () { return Promise.resolve(JSON.stringify(obj)); },
+      });
     }
     if (u.indexOf("/api/plugins/jarvis-voice/") === -1) {
       return realFetch ? realFetch(url, opts) : Promise.reject(new Error("no fetch"));
@@ -292,9 +327,17 @@
         if (picked && BACKENDS_STATE.available[picked]) BACKENDS_STATE.active = picked;
         return json({ ok: true, backend: BACKENDS_STATE.active });
       }
-      return json({ active: BACKENDS_STATE.active, available: BACKENDS_STATE.available, backends: ["granite", "cloud", "codex", "claude"] });
+      return json({ active: BACKENDS_STATE.active, available: BACKENDS_STATE.available, labels: BACKENDS_STATE.labels, backends: ["granite", "cloud", "codex", "claude"] });
     }
     if (u.indexOf("/credits") >= 0) return json(creditsPayload(u.indexOf("refresh=true") >= 0));
+    if (u.indexOf("/brains") >= 0) {
+      if (opts && String(opts.method).toUpperCase() === "POST") {
+        var pickedBrain = JSON.parse(opts.body || "{}").brain;
+        if (pickedBrain && BRAINS_STATE.brains.some(function (b) { return b.id === pickedBrain; })) BRAINS_STATE.active = pickedBrain;
+        return json({ ok: true, brain: BRAINS_STATE.active });
+      }
+      return json(BRAINS_STATE);
+    }
     if (u.indexOf("/memory/search") >= 0) return json({ hits: MEM_FULL, card: "", budget_tokens: 600 });
     if (/\/tasks\/[^/]+\/control$/.test(u)) {
       var idc = u.match(/\/tasks\/([^/]+)\/control$/)[1];
@@ -331,21 +374,42 @@
     window.__HERMES_PLUGINS__ = {
       register: function (name, component) { registered[name] = component; },
     };
-    var s = document.createElement("script");
-    s.src = "../hermes-plugin/dashboard/dist/index.js";
-    s.onload = function () {
-      var App = registered["jarvis-voice"];
-      if (!App) {
-        document.getElementById("hz-status").textContent = "register() not called!";
-        return;
-      }
-      var el = window.React.createElement(App);
-      if (window.ReactDOM.createRoot) window.ReactDOM.createRoot(mount).render(el);
-      else window.ReactDOM.render(el, mount);
-      document.getElementById("hz-status").textContent = "mounted";
-      afterMount();
+    // Real dist/index.js reads window.HermesUI at module-evaluation time
+    // (see src/hui.js), exactly like the production entry.js flow — boot
+    // the vendored library first, same as HermesUIBoot() does there.
+    var hb = document.createElement("script");
+    hb.src = "../hermes-plugin/dashboard/dist/hui/boot.js";
+    hb.onload = function () {
+      window
+        .HermesUIBoot("../hermes-plugin/dashboard/dist/hui/")
+        .then(function () {
+          var s = document.createElement("script");
+          s.src = "../hermes-plugin/dashboard/dist/index.js";
+          s.onload = function () {
+            var App = registered["jarvis-voice"];
+            if (!App) {
+              document.getElementById("hz-status").textContent = "register() not called!";
+              return;
+            }
+            var el = window.React.createElement(App);
+            if (window.ReactDOM.createRoot) window.ReactDOM.createRoot(mount).render(el);
+            else window.ReactDOM.render(el, mount);
+            document.getElementById("hz-status").textContent = "mounted";
+            afterMount();
+          };
+          s.onerror = function () {
+            document.getElementById("hz-status").textContent = "index.js failed to load";
+          };
+          document.head.appendChild(s);
+        })
+        .catch(function (e) {
+          document.getElementById("hz-status").textContent = "HermesUIBoot failed: " + (e && e.message ? e.message : e);
+        });
     };
-    document.head.appendChild(s);
+    hb.onerror = function () {
+      document.getElementById("hz-status").textContent = "hui/boot.js failed to load — run hui-sync?";
+    };
+    document.head.appendChild(hb);
   }
 
   // load React UMD (dev dependency) — file:// friendly
@@ -508,6 +572,37 @@
   };
   document.getElementById("hz-timeout").onclick = function () {
     serverEvent({ t: "state", value: "idle", detail: "turn timed out", turn_id: turnSeq });
+  };
+  // ---- protocol v2 injectors ----
+  document.getElementById("hz-pending").onclick = function () {
+    serverEvent({ t: "turn.pending", utt_id: "u" + turnSeq });
+  };
+  document.getElementById("hz-vad-on").onclick = function () {
+    serverEvent({ t: "vad.speech", active: true });
+  };
+  document.getElementById("hz-vad-off").onclick = function () {
+    serverEvent({ t: "vad.speech", active: false });
+  };
+  document.getElementById("hz-merge").onclick = function () {
+    serverEvent({ t: "stt.partial", text: "so anyway about the", utt_id: "u" + turnSeq });
+    setTimeout(function () {
+      serverEvent({ t: "stt.final", text: "so anyway about the deploy", ms: 240, utt_id: "u" + turnSeq, turn_id: turnSeq });
+    }, 400);
+    setTimeout(function () {
+      serverEvent({ t: "stt.final", text: "so anyway about the deploy going out tonight", ms: 180, utt_id: "u" + turnSeq, merged: true, turn_id: turnSeq });
+    }, 1100);
+  };
+  document.getElementById("hz-server-bargein").onclick = function () {
+    ampBurst(1200);
+    serverEvent({ t: "tts.start", text: "This is a longer reply the server will cut off mid" });
+    setTimeout(function () {
+      serverEvent({ t: "tts.end", ms_first_chunk: 200, interrupted: true, turn_id: turnSeq });
+      serverEvent({ t: "state", value: "interrupted", turn_id: turnSeq });
+    }, 500);
+  };
+  document.getElementById("hz-brain").onclick = function () {
+    BRAINS_STATE.active = BRAINS_STATE.active === "fast" ? "smart" : "fast";
+    serverEvent({ t: "brain.changed", brain: BRAINS_STATE.active });
   };
 
   // ---- offline toggle ----

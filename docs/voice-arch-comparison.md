@@ -1,3 +1,9 @@
+> **Historical (pre 2026-09-28).** Written when jarvisd ran one on-box model
+> for everything, local-only. Since 2026-09-28 the mediator defaults to a
+> cloud brain and STT/turn-detection changed to Parakeet + Silero/Smart
+> Turn v3.2, see `ARCHITECTURE.md` for the current design. Treat the
+> comparisons below as a point-in-time reference, not current constraints.
+
 # Voice architecture comparison — jarvisd vs. pipecat / LiveKit Agents / GLaDOS / OpenJarvis / local_voice
 
 Read-only research, 2026-07-28. Goal: find *why* jarvisd feels inferior to reference voice-assistant

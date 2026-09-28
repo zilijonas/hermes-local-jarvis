@@ -35,6 +35,59 @@ AMP_WINDOW_SAMPLES = SAMPLE_RATE * AMP_WINDOW_MS // 1000  # 792
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
+# ---------------------------------------------------------------- speakable text
+# Kokoro reads what it is given. Markdown, symbols and "$64,250" come out as noise
+# ("dollar one sixty-four..."), so every sentence goes through speakable() first.
+_MD_LINK = re.compile(r"\[([^\]]+)\]\((?:[^)]+)\)")
+_URL = re.compile(r"https?://([^/\s]+)\S*")
+_BULLET = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+", re.M)
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
+_CURRENCY = {"$": "dollars", "\u20ac": "euros", "\u00a3": "pounds"}
+_CUR_RE = re.compile(r"([$\u20ac\u00a3])\s?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)([kKmMbB]n?)?(?![A-Za-z])")
+_SCALE = {"k": "thousand", "m": "million", "b": "billion", "bn": "billion"}
+_ABBREV = [(re.compile(r"\be\.g\.", re.I), "for example"), (re.compile(r"\bi\.e\.", re.I), "that is"),
+           (re.compile(r"\bvs\.?(?=\s)", re.I), "versus"), (re.compile(r"\betc\."), "and so on"),
+           (re.compile(r"\s&\s"), " and "), (re.compile(r"\u00b0\s?C\b"), " degrees Celsius"),
+           (re.compile(r"\u00b0\s?F\b"), " degrees Fahrenheit"), (re.compile(r"\u00b0"), " degrees")]
+
+
+def _money(m: "re.Match") -> str:
+    amount, scale = m.group(2), (m.group(3) or "").lower()
+    word = _CURRENCY[m.group(1)]
+    return f"{amount} {_SCALE[scale]} {word}" if scale else f"{amount} {word}"
+
+
+def plain_typography(text: str) -> str:
+    """Display text without the typography Linas bans in anything he reads (em/en
+    dashes, arrows, ellipsis characters). Enforced in code, not by prompt."""
+    t = re.sub(r"\s*\u2014\s*", ", ", text or "")
+    t = re.sub(r"(?<=\d)\u2013(?=\d)", "-", t)
+    t = re.sub(r"\s*\u2013\s*", ", ", t)
+    t = t.replace("\u2192", " to ").replace("\u2026", ".")
+    return re.sub(r",\s*,", ",", t)
+
+
+def speakable(text: str) -> str:
+    """Turn model output into text a TTS voice can read without garbage."""
+    t = re.sub(r"[\u00a0\u202f\u2009]", " ", text or "")        # nbsp / narrow nbsp
+    t = _MD_LINK.sub(r"\1", t)
+    t = _URL.sub(lambda m: m.group(1).removeprefix("www."), t)
+    t = _BULLET.sub("", t)
+    t = re.sub(r"[*_`#>|~]+", "", t)
+    t = _EMOJI.sub("", t)
+    t = re.sub(r"\s*[\u2014\u2013]\s*", ", ", t)          # em/en dash -> pause
+    t = t.replace("\u2026", "...").replace("\u2192", " to ")
+    t = _CUR_RE.sub(_money, t)
+    t = re.sub(r"\b(\d{1,2}):00\b", r"\1", t)               # 5:00 PM -> 5 PM
+    t = re.sub(r"\b(\d{1,2}):0(\d)\b", r"\1 oh \2", t)      # 9:05 -> 9 oh 5
+    t = re.sub(r"\b(\d{1,2}):(\d{2})\b", r"\1 \2", t)       # 9:30 -> 9 30
+    for rx, rep in _ABBREV:
+        t = rx.sub(rep, t)
+    t = re.sub(r"\s+([,.!?;:])", r"\1", t)
+    t = re.sub(r"([,;:])(?=[,;:])", "", t)
+    return re.sub(r"\s{2,}", " ", t).strip(" ,;")
+
+
 OnChunk = Callable[[bytes, int], None]
 OnAmp = Callable[[float], None]
 
