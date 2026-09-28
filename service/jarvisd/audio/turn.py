@@ -128,6 +128,10 @@ class TurnEndpointer:
         self.turn_threshold = turn_threshold
         self.max_utterance_ms = max_utterance_s * 1000
         self.last_turn_prob: Optional[float] = None
+        # Push-to-talk switches Smart Turn off and uses a longer plain silence
+        # cap (the user holds the floor); hands-free restores both. See set_mode().
+        self.use_smart_turn = True
+        self._handsfree_max_pause = max_pause_ms
         self.last_is_speech = False
         self.reset()
 
@@ -144,6 +148,14 @@ class TurnEndpointer:
         self._pending = False
         self.last_is_speech = False
         self.vad.reset()
+
+    def set_mode(self, mode: str, ptt_silence_ms: int = 2500) -> None:
+        if mode == "ptt":
+            self.use_smart_turn = False
+            self.max_pause_ms = ptt_silence_ms
+        else:
+            self.use_smart_turn = True
+            self.max_pause_ms = self._handsfree_max_pause
 
     @property
     def in_speech(self) -> bool:
@@ -217,6 +229,8 @@ class TurnEndpointer:
             return False
         if self.smart_turn is None:
             return self._silence_ms >= self.fallback_endpoint_ms
+        if not self.use_smart_turn:
+            return self._silence_ms >= self.max_pause_ms
         if self._silence_ms >= self.max_pause_ms:
             return True
         if self._silence_ms < self.quiet_ms:

@@ -1,29 +1,32 @@
-// visualizer/index.js — public API for the intelligence core. The renderer
-// itself lives in core.js (a 2D-canvas port of the design prototype's
-// fibonacci-lattice core — three.js is gone, ~430KB off the bundle).
+// visualizer/index.js — public API for the Jarvis orb. The renderer lives in
+// core.js (WebGL shader orb-gl.js, Canvas 2D fallback orb-2d.js); state
+// tables in states.js; theme colours in palette.js.
 //
-// Public API UNCHANGED from the previous three.js implementation, so app.js
-// wiring stays thin:
+// Public API unchanged, so app.js wiring stays thin:
 //   createVisualizer(canvas) -> {
 //     setState(state, detail)   FSM state from the server (SPEC §WebSocket;
 //                               plus client-derived "offline")
 //     onAmp(v)                  server tts.amp fallback (used only when the
 //                               local AnalyserNode tap is unavailable)
-//     onMicLevel(v)             mic worklet rms (drives the listening
-//                               aperture + ripples)
-//     onMemoryHits(items)       memory.hits payload -> constellation nodes
+//     onMicLevel(v)             mic worklet rms (listening swell)
+//     onMemoryHits(items)       memory.hits payload -> memory motes
 //     setAudioSource(fn)        audio-out.js getLevels; read ONCE per frame
-//     setReducedMotion(v)       static frame + dashed state ring
+//     setReducedMotion(v)       one static, state-coloured frame per change
 //     resize() / destroy()
 //   }
 //
 // Never fakes activity: every motion is a function of the server FSM state
 // (+ time in state), the analyser level of audio actually being heard, the
-// mic rms, or real memory hits. See core.js for the porting notes.
+// mic rms, or real memory hits.
+//
+// QA hook: the most recent instance is exposed as window.__jarvisOrb
+// ({ force(state|null), levels(fn|null), mic(v), stats() }). Inert unless
+// called; cleared on destroy.
 import { createCore } from "./core.js";
 
 export function createVisualizer(canvas) {
   var core = createCore(canvas);
+  if (typeof window !== "undefined") window.__jarvisOrb = core.debug;
 
   return {
     setState: function (state, detail) {
@@ -50,6 +53,7 @@ export function createVisualizer(canvas) {
     },
     destroy: function () {
       core.destroy();
+      if (typeof window !== "undefined" && window.__jarvisOrb === core.debug) window.__jarvisOrb = null;
     },
   };
 }

@@ -23,6 +23,11 @@
 // works everywhere). getDiagnostics() reports which rung is active.
 import { assetUrl } from "./sdk.js";
 
+// iOS / iPadOS WebKit (incl. home-screen PWAs). iPadOS reports "MacIntel" + touch.
+var IS_IOS = typeof navigator !== "undefined" &&
+  (/iP(hone|ad|od)/.test(navigator.userAgent || "") ||
+   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+
 export function createAudioOutput() {
   var TARGET_SOURCE_RATE = 24000;
   var DRAIN_CONFIRM_MS = 250; // matches the server's playback.end echo-guard debounce
@@ -217,6 +222,14 @@ export function createAudioOutput() {
   }
 
   function connectEchoCancelledOutput(sourceNode) {
+    if (IS_IOS) {
+      // iOS runs the mic through system voice processing, which cancels the
+      // app's own output: the plain destination is AEC-covered, and the
+      // loopback/<audio> routes are the ones that go silent in PWAs.
+      connectDirect(sourceNode);
+      outputError = null;
+      return Promise.resolve();
+    }
     if (typeof audioCtx.createMediaStreamDestination !== "function") {
       outputError = "createMediaStreamDestination unsupported on this browser";
       connectDirect(sourceNode);
@@ -259,13 +272,52 @@ export function createAudioOutput() {
       });
   }
 
+  // The context must be CREATED and resumed inside a user gesture: iOS keeps a
+  // context born outside one suspended for good (that was "no sound on the
+  // phone"). iOS also gets the hardware rate, not 24 kHz: a second context at a
+  // different rate than the mic's plays silence there; queueChunk resamples.
+  function ensureContext() {
+    if (audioCtx) return audioCtx;
+    var Ctor = window.AudioContext || window.webkitAudioContext;
+    if (IS_IOS) {
+      audioCtx = new Ctor();
+    } else {
+      try {
+        audioCtx = new Ctor({ sampleRate: TARGET_SOURCE_RATE });
+      } catch (e) {
+        audioCtx = new Ctor();
+      }
+    }
+    return audioCtx;
+  }
+
+  // Call synchronously from any real user gesture (tap, click, key). Resumes the
+  // context and plays one silent frame, the classic iOS unlock, then builds the
+  // graph. Cheap and idempotent; returns true once audio is actually running.
+  function unlock() {
+    var ctx = ensureContext();
+    try {
+      if (ctx.state !== "running" && ctx.resume) ctx.resume().catch(function () {});
+      var buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+      var src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch (e) {
+      /* a failed unlock is retried on the next gesture */
+    }
+    if (!IS_IOS) primeAutoplay();
+    ensureReady().catch(function () {});
+    return ctx.state === "running";
+  }
+
+  function isUnlocked() {
+    return !!audioCtx && audioCtx.state === "running";
+  }
+
   function ensureReady() {
     if (readyPromise) return readyPromise;
-    try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: TARGET_SOURCE_RATE });
-    } catch (e) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
+    ensureContext();
     readyPromise = audioCtx.audioWorklet
       .addModule(assetUrl("player-worklet.js"))
       .then(function () {
@@ -422,6 +474,8 @@ export function createAudioOutput() {
   }
 
   return {
+    unlock: unlock,
+    isUnlocked: isUnlocked,
     queueChunk: queueChunk,
     hardStop: hardStop,
     setGain: setGain,

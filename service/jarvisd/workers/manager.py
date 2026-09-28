@@ -94,6 +94,9 @@ _TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$", re.M)
 def _sanitize_speakable(text: str) -> str:
     """Strip markdown so a summary is safe to read aloud, collapse whitespace,
     and cap it to roughly 400 characters."""
+    from ..audio.tts import plain_typography  # the UI shows this text too
+
+    text = plain_typography(text)
     text = _TABLE_ROW_RE.sub(" ", text)
     text = _HEADING_RE.sub("", text)
     text = _BULLET_LINE_RE.sub("", text)
@@ -206,7 +209,7 @@ class WorkerManager:
             if not alive:
                 self.db.update_task(t["id"], status="needs_review",
                                     result_summary="jarvisd restarted; worker process lost. "
-                                                   "Output may be incomplete — re-delegate if needed.")
+                                                   "Output may be incomplete, re-delegate if needed.")
                 self._emit(t["id"])
                 fixed += 1
         return fixed
@@ -592,12 +595,12 @@ class WorkerManager:
         if missing:
             return _sanitize_speakable(
                 f"result claims files that don't exist: {', '.join(missing[:3])} "
-                "— flagged for review")
+                "(flagged for review)")
         # Drop CLI chatter ("hermes -z: ignoring ...", HF hub warnings): not results.
         text = "\n".join(l for l in (out or "").splitlines()
                          if not re.match(r"\s*(hermes( -z)?:|warning:)", l, re.I)).strip()
         if not text:
-            return "worker produced no output — flagged for review"
+            return "worker produced no output (flagged for review)"
         # Prefer the worker's FINAL paragraph (blank-line-separated block) --
         # that's where the preamble asks it to put a plain-English summary.
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]

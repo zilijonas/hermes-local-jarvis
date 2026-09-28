@@ -28,7 +28,7 @@ import numpy as np
 
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2  # bytes, s16le
-PARTIAL_WINDOW_S = 20.0  # partial decodes cover up to the last 20 s of the utterance
+PARTIAL_WINDOW_S = 30.0  # = the endpointer's max utterance: partials never slide
 DEFAULT_PARAKEET_MODEL = "mlx-community/parakeet-tdt-0.6b-v2"
 
 
@@ -175,7 +175,7 @@ class StreamingSTT:
         if self._engine is not None:
             detail = f"{self._engine.label()} resident"
             if self._fallback_note:
-                detail += f" — fallback: {self._fallback_note}"
+                detail += f" (fallback: {self._fallback_note})"
             return {"ok": True, "detail": detail}
         if self._load_future is not None:
             return {"ok": False, "detail": "loading"}

@@ -153,15 +153,38 @@ async def _settle(p, timeout=3.0):
 async def test_ptt_is_one_utterance_despite_pauses():
     p, bus = make(["remind me to call mom tomorrow"])
     p.mode = "ptt"
+    p.vad.set_mode("ptt", 2500)
     p.mic_start()
-    speech = b"\x10\x20" * 8000
-    silence = b"\x00\x00" * 16000  # a full second of silence mid-utterance
+    speech = (b"\x00\x40\x00\xc0" * 4000)   # loud square-ish wave, 0.5 s
+    silence = b"\x00\x00" * 16000            # a full second of silence mid-utterance
     for chunk in (speech, silence, speech):
         p.feed_audio(chunk)
     p.mic_stop()
     await _settle(p)
     finals = bus.of("stt.final")
     assert len(finals) == 1 and p.mediator.turns == ["remind me to call mom tomorrow"]
+
+
+@pytest.mark.asyncio
+async def test_ptt_mic_left_on_ends_turn_after_silence():
+    """Mic toggled on, user speaks then goes quiet without touching anything: the
+    turn ends by itself instead of recording silence forever."""
+    import shutil, subprocess, tempfile
+    if not (shutil.which("say") and shutil.which("ffmpeg")):
+        pytest.skip("needs say + ffmpeg")
+    d = tempfile.mkdtemp()
+    subprocess.run(["say", "-o", f"{d}/a.aiff", "what time is it"], check=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", f"{d}/a.aiff", "-ar", "16000",
+                    "-ac", "1", "-f", "s16le", f"{d}/a.raw"], check=True)
+    p, bus = make(["what time is it"])
+    p.mode = "ptt"
+    p.vad.set_mode("ptt", 2500)
+    p.mic_start()
+    p.feed_audio(open(f"{d}/a.raw", "rb").read())
+    shutil.rmtree(d, ignore_errors=True)
+    p.feed_audio(b"\x00\x00" * 16000 * 3)     # 3 s of silence
+    await _settle(p)
+    assert p.mediator.turns == ["what time is it"] and p.mic_active
 
 
 @pytest.mark.asyncio

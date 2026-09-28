@@ -1,585 +1,350 @@
-// visualizer/core.js — the intelligence core: a 2D-canvas port of the design
-// prototype's renderer (design/"Jarvis Command Centre.dc.html", Component
-// _buildGeometry/_frame/_draw/_drawMode). Replaces the old three.js orb —
-// one rAF, one 2D context, no WebGL.
+// visualizer/core.js — the Jarvis orb: a soft luminous body with fluid
+// internal motion, a breathing halo and a speech-driven outline. Replaces the
+// fibonacci-lattice core (2026-09-28 redesign: no wireframes, rings or
+// particles-on-lines).
 //
-// Ported from the prototype:
-//   - fibonacci-sphere lattice (118 points, 3 nearest-neighbour edges,
-//     precomputed once), rotating perspective projection with vertex noise
-//   - horizon ellipses, drifting particle field
-//   - all 10 mode overlays (calm/open/resolve/orbit/stars/radial/arc/
-//     transfer/bands/pulse) for the 15 states in states.js
-//   - exponential parameter blending 1−e^(−dt/95): ~300ms visual settle,
-//     never snaps, fully settled well before 400ms
-//   - reduced-motion: single static frame + dashed state ring
-// Adapted for production:
-//   - honest signals only: speaking amplitude comes from audio-out
-//     getLevels() (RMS + low/mid/high of the audio actually heard, analyser
-//     tap) with server tts.amp as fallback; listening from the mic worklet
-//     rms; memory stars from real memory.hits items. The prototype's
-//     simulated sine "signals" are gone.
-//   - nucleus/atmosphere use cached radial-gradient sprites (regenerated
-//     only when the blended color moves), no per-frame gradient allocation,
-//     no shadowBlur.
-//   - `done` renders ONE outward pulse ring (phase = time since state
-//     entry), per the redesign spec — the prototype looped it.
-//   - degradation ladder when frames run long: drop particle field → drop
-//     horizon grid → halve the lattice.
-//   - rAF pauses on hidden tab; DPR capped at 2.
-import { CORE_STATES } from "./states.js";
+// Renderer: WebGL fragment shader (orb-gl.js), Canvas 2D fallback
+// (orb-2d.js) when WebGL is unavailable. This file owns everything else:
+//
+//   - honest signals only. Speaking = audio-out getLevels() (RMS + low/mid/
+//     high of the audio actually heard, analyser tap), server tts.amp as the
+//     fallback; listening = mic worklet rms; memory motes = real memory.hits
+//     count. Every other motion is a function of FSM state + time in state.
+//   - parameters (states.js ORB_STATES) and colours (palette.js, theme
+//     tokens) blend exponentially toward the active state: never snap.
+//   - one-shot envelopes keyed off time-in-state: interrupted/error flash
+//     warm/red then settle, done swells once.
+//   - phases are integrated per frame, so speed changes never jump.
+//   - adaptive quality: sustained slow frames step the render scale down
+//     (1 -> 0.8 -> 0.66 -> 0.5 of the DPR-capped size); long fast runs step
+//     back up at most twice. DPR capped at 2.
+//   - rAF pauses on hidden tabs; offline renders at half rate; reduced
+//     motion renders one settled, state-coloured frame per change.
+//   - no per-frame allocation in the hot path (reused typed arrays/objects).
+import { ORB_STATES } from "./states.js";
+import { buildPalettes, mix } from "./palette.js";
+import { createGLRenderer } from "./orb-gl.js";
+import { createCanvasRenderer } from "./orb-2d.js";
 
 var DPR_CAP = 2;
-var BLEND_TAU_MS = 95; // --jv-core-blend
-var GOLDEN_ANGLE = 2.399963229728653;
+var SCALES = [1, 0.8, 0.66, 0.5];
+var PARAM_TAU_MS = 180;
+var COLOR_TAU_MS = 240;
+var KEYS = ["size", "glow", "flow", "swirl", "spin", "deform", "bright", "sat", "breath", "cool"];
 
 function clamp01(v) {
-  return Math.max(0, Math.min(1, v));
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+function now() {
+  return (window.performance || Date).now();
+}
+function lerp3(out, target, k) {
+  out[0] += (target[0] - out[0]) * k;
+  out[1] += (target[1] - out[1]) * k;
+  out[2] += (target[2] - out[2]) * k;
 }
 
 export function createCore(canvas) {
   var state = "idle";
-  var stateSince = 0; // seconds on the scene clock
+  var forced = null; // QA override (window.__jarvisOrb.force)
+  var stateSince = 0;
   var reduced = false;
-  var hits = []; // memory.hits items (stars mode)
-  var getAudioLevels = null; // audio-out getLevels tap
+  var hits = [];
+  var getAudioLevels = null;
+  var fakeLevels = null; // QA override (window.__jarvisOrb.levels)
   var destroyed = false;
 
-  // signal envelopes (all driven by real inputs)
-  var amp = 0; // TTS loudness envelope
-  var ampFallback = 0; // decaying target fed by server tts.amp events
-  var levels = null; // last {level,low,mid,high} from the analyser tap
+  // ---- signal envelopes ----------------------------------------------------
+  var amp = 0;
+  var ampFallback = 0;
+  var low = 0;
+  var mid = 0;
+  var high = 0;
   var mic = 0;
   var micTarget = 0;
-  var ripples = [];
-  var lastRippleT = 0;
+  var micW = 0; // how much the mic drives the orb in this state (blended)
+  var motesAmt = 0;
 
-  // blended state params (start at idle)
+  // ---- blended state ---------------------------------------------------------
   var p = null;
+  var palettes = buildPalettes();
+  var colMain = [0, 0, 0];
+  var colSoft = [0, 0, 0];
+  var colDeep = [0, 0, 0];
+  var colCool = [0, 0, 0];
+  var tMain = [0, 0, 0];
+  var flowPhase = 3.7;
+  var spinPhase = 0.6;
 
-  // ---- geometry (precomputed once — prototype _buildGeometry) -------------
-  var N = 118;
-  var pts = [];
-  var edges = [];
-  var parts = [];
-  (function buildGeometry() {
-    var i, j, k;
-    for (i = 0; i < N; i++) {
-      var y = 1 - (i / (N - 1)) * 2;
-      var r = Math.sqrt(Math.max(0, 1 - y * y));
-      var th = i * GOLDEN_ANGLE;
-      pts.push([Math.cos(th) * r, y, Math.sin(th) * r]);
-    }
-    var seen = {};
-    for (i = 0; i < N; i++) {
-      var d = [];
-      for (j = 0; j < N; j++) {
-        if (i === j) continue;
-        var dx = pts[i][0] - pts[j][0];
-        var dy = pts[i][1] - pts[j][1];
-        var dz = pts[i][2] - pts[j][2];
-        d.push([dx * dx + dy * dy + dz * dz, j]);
-      }
-      d.sort(function (a, b) {
-        return a[0] - b[0];
-      });
-      for (k = 0; k < 3; k++) {
-        j = d[k][1];
-        var key = i < j ? i + ":" + j : j + ":" + i;
-        if (!seen[key]) {
-          seen[key] = true;
-          edges.push([Math.min(i, j), Math.max(i, j)]);
-        }
-      }
-    }
-    for (i = 0; i < 84; i++) {
-      parts.push({ x: Math.random(), y: Math.random(), z: 0.3 + Math.random() * 0.7, s: 0.2 + Math.random() * 0.8 });
-    }
-  })();
-  var proj = new Array(N); // scratch projection buffer
+  // reused frame parameter object handed to the renderer
+  var U = {
+    cx: 0, cy: 0, R: 1, maxD: 2, flow: 0, spin: 0, swirl: 0, deform: 0,
+    bands: new Float32Array(4), glow: 0, bright: 1, sat: 1, light: false,
+    main: colMain, soft: colSoft, deep: colDeep, cool: colCool, motes: new Float32Array(18),
+  };
 
-  // ---- degradation ladder ---------------------------------------------------
-  // 0 full · 1 no particle field · 2 no horizon grid · 3 half lattice.
-  var degrade = 0;
+  var renderer = createGLRenderer(canvas) || createCanvasRenderer(canvas);
+
+  // ---- adaptive quality ------------------------------------------------------
+  var level = 0;
   var slowFrames = 0;
+  var fastFrames = 0;
+  var upgrades = 0;
+  var warm = 0;
+  var dts = new Float32Array(180);
+  var dtN = 0;
+  var ema = 16.7; // smoothed frame time (ms)
   function noteFrameCost(dt) {
-    if (dt > 26) {
-      slowFrames++;
-      if (slowFrames > 90 && degrade < 3) {
-        degrade++;
-        slowFrames = 0;
-      }
-    } else if (slowFrames > 0) {
-      slowFrames--;
+    dts[dtN % dts.length] = dt;
+    dtN++;
+    if (warm < 30 || dt > 250) {
+      warm++;
+      return; // startup / tab-resume hitches say nothing about steady cost
+    }
+    ema += (dt - ema) * 0.05;
+    // an EMA, not a per-frame vote: alternating 16/33 ms frames (a device
+    // that can't hold 60) must still count as slow
+    if (ema > 20.5) slowFrames++;
+    else slowFrames = Math.max(0, slowFrames - 2);
+    if (ema < 17.6) fastFrames++;
+    else fastFrames = 0;
+    if (slowFrames > 90 && level < SCALES.length - 1) {
+      level++;
+      slowFrames = 0;
+      fastFrames = 0;
+      sizeCanvas();
+    } else if (fastFrames > 900 && level > 0 && upgrades < 2) {
+      level--;
+      upgrades++;
+      fastFrames = 0;
+      sizeCanvas();
     }
   }
 
-  // ---- cached gradient sprites (no per-frame createRadialGradient) ---------
-  var SPRITE = 128;
-  var atmosSprite = document.createElement("canvas");
-  var nucSprite = document.createElement("canvas");
-  atmosSprite.width = atmosSprite.height = SPRITE;
-  nucSprite.width = nucSprite.height = SPRITE;
-  var spriteKey = "";
-  function rebuildSprites(r, g, b) {
-    var key = r + "," + g + "," + b;
-    if (key === spriteKey) return;
-    spriteKey = key;
-    var half = SPRITE / 2;
-    // atmosphere: prototype stops 0.09 → 0.035 → 0 (glow applied via alpha)
-    var a = atmosSprite.getContext("2d");
-    a.clearRect(0, 0, SPRITE, SPRITE);
-    var ga = a.createRadialGradient(half, half, SPRITE * 0.035, half, half, half);
-    ga.addColorStop(0, "rgba(" + key + ",0.09)");
-    ga.addColorStop(0.45, "rgba(" + key + ",0.035)");
-    ga.addColorStop(1, "rgba(" + key + ",0)");
-    a.fillStyle = ga;
-    a.fillRect(0, 0, SPRITE, SPRITE);
-    // nucleus: bright center bloom; per-frame intensity via globalAlpha
-    var n = nucSprite.getContext("2d");
-    n.clearRect(0, 0, SPRITE, SPRITE);
-    var gn = n.createRadialGradient(half, half, 0, half, half, half);
-    gn.addColorStop(0, "rgba(" + key + ",1)");
-    gn.addColorStop(0.28, "rgba(" + key + ",0.38)");
-    gn.addColorStop(1, "rgba(" + key + ",0)");
-    n.fillStyle = gn;
-    n.fillRect(0, 0, SPRITE, SPRITE);
-  }
-
-  // ---- canvas sizing --------------------------------------------------------
+  // ---- canvas sizing -----------------------------------------------------------
+  var cssW = 0;
+  var cssH = 0;
+  var scale = 1; // device px per css px actually rendered
   function sizeCanvas() {
-    if (!canvas.clientWidth) return;
-    var dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1);
-    var w = Math.round(canvas.clientWidth * dpr);
-    var h = Math.round(canvas.clientHeight * dpr);
+    cssW = canvas.clientWidth;
+    cssH = canvas.clientHeight;
+    if (!cssW || !cssH) return;
+    scale = Math.min(DPR_CAP, window.devicePixelRatio || 1) * SCALES[level];
+    var w = Math.max(1, Math.round(cssW * scale));
+    var h = Math.max(1, Math.round(cssH * scale));
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
     }
   }
 
-  // ---- frame loop -----------------------------------------------------------
+  // ---- state helpers -----------------------------------------------------------
+  function activeState() {
+    return forced || state;
+  }
+  function targetRow() {
+    return ORB_STATES[activeState()] || ORB_STATES.idle;
+  }
+  function tonePal(tone) {
+    return palettes.tones[tone] || palettes.tones.accent;
+  }
+  function snapToTarget() {
+    var row = targetRow();
+    p = {};
+    for (var i = 0; i < KEYS.length; i++) p[KEYS[i]] = row[KEYS[i]];
+    var tp = tonePal(row.tone);
+    var m = mix(tp.main, tp.cool, row.cool * 0.45);
+    colMain[0] = m[0]; colMain[1] = m[1]; colMain[2] = m[2];
+    colSoft[0] = tp.soft[0]; colSoft[1] = tp.soft[1]; colSoft[2] = tp.soft[2];
+    colDeep[0] = tp.deep[0]; colDeep[1] = tp.deep[1]; colDeep[2] = tp.deep[2];
+    colCool[0] = tp.cool[0]; colCool[1] = tp.cool[1]; colCool[2] = tp.cool[2];
+  }
+  snapToTarget();
+
+  // ---- per-frame update --------------------------------------------------------
+  function update(dt, t) {
+    var row = targetRow();
+    var st = activeState();
+    var kP = reduced ? 1 : 1 - Math.exp(-dt / PARAM_TAU_MS);
+    var kC = reduced ? 1 : 1 - Math.exp(-dt / COLOR_TAU_MS);
+    for (var i = 0; i < KEYS.length; i++) {
+      var key = KEYS[i];
+      p[key] += (row[key] - p[key]) * kP;
+    }
+
+    // audio: real analyser levels first, server amp events as fallback
+    var lv = fakeLevels ? fakeLevels() : getAudioLevels ? getAudioLevels() : null;
+    var tLevel, tLow, tMid, tHigh;
+    if (lv) {
+      tLevel = clamp01(lv.level || 0);
+      tLow = clamp01((lv.low || 0) * 1.8);
+      tMid = clamp01((lv.mid || 0) * 2.6);
+      tHigh = clamp01((lv.high || 0) * 4.5);
+    } else {
+      ampFallback *= Math.exp(-dt / 110);
+      tLevel = ampFallback;
+      tLow = ampFallback * 0.8;
+      tMid = ampFallback * 0.55;
+      tHigh = ampFallback * 0.3;
+    }
+    if (reduced) {
+      amp = low = mid = high = 0;
+    } else {
+      var att = 1 - Math.exp(-dt / 40);
+      var rel = 1 - Math.exp(-dt / 150);
+      amp += (tLevel - amp) * (tLevel > amp ? att : rel);
+      low += (tLow - low) * (tLow > low ? att : rel);
+      mid += (tMid - mid) * (tMid > mid ? att : rel);
+      high += (tHigh - high) * (tHigh > high ? att : rel);
+    }
+
+    // mic: full weight while listening, a hint in idle, none while speaking
+    var micWT = st === "listening" ? 1 : st === "speaking" ? 0 : st === "idle" ? 0.45 : 0.2;
+    micW += (micWT - micW) * kP;
+    micTarget *= Math.exp(-dt / 160);
+    var mk = 1 - Math.exp(-dt / (micTarget > mic ? 45 : 170));
+    mic += (micTarget - mic) * mk;
+    var micE = reduced ? 0 : mic * micW;
+
+    // one-shot envelopes keyed off time in state
+    var age = t - stateSince;
+    var flash = 0;
+    if (row.flash && !reduced) flash = Math.min(1, age / 0.07) * Math.exp(-age / 0.6);
+    var pulse = row.pulse && !reduced && age < 1.1 ? Math.sin(Math.PI * Math.min(1, age / 1.1)) : 0;
+
+    // colour: tone palette (+cool lean), flash tone mixed on top
+    var tp = tonePal(row.tone);
+    var cl = row.cool * 0.45;
+    tMain[0] = tp.main[0] + (tp.cool[0] - tp.main[0]) * cl;
+    tMain[1] = tp.main[1] + (tp.cool[1] - tp.main[1]) * cl;
+    tMain[2] = tp.main[2] + (tp.cool[2] - tp.main[2]) * cl;
+    lerp3(colMain, tMain, kC);
+    lerp3(colSoft, tp.soft, kC);
+    lerp3(colDeep, tp.deep, kC);
+    lerp3(colCool, tp.cool, kC);
+
+    // phases
+    if (!reduced) {
+      var ds = dt / 1000;
+      flowPhase += ds * (p.flow + amp * 0.35 + micE * 0.25 + flash * 0.4);
+      spinPhase += ds * p.spin;
+      if (flowPhase > 4000) flowPhase -= 4000; // keeps float precision; noise has no period so one seam per ~3h
+    }
+
+    // memory motes: one per real hit (max 6), spiralling into the body
+    motesAmt += ((st === "memory" && !reduced ? 1 : 0) - motesAmt) * (1 - Math.exp(-dt / 320));
+    var n = Math.max(1, Math.min(6, hits.length || 2));
+    for (var m = 0; m < 6; m++) {
+      var o = m * 3;
+      if (m >= n || motesAmt < 0.002) {
+        U.motes[o + 2] = 0;
+        continue;
+      }
+      var ph = (t * 0.28 + m / n) % 1;
+      var rr = 1.9 - ph * 1.75;
+      var an = m * 2.39996 + ph * 1.8 + t * 0.08;
+      U.motes[o] = Math.cos(an) * rr;
+      U.motes[o + 1] = Math.sin(an) * rr * 0.9;
+      U.motes[o + 2] = motesAmt * Math.pow(Math.sin(ph * Math.PI), 1.5) * 0.85;
+    }
+
+    // compose frame parameters
+    var breathS = reduced ? 0 : Math.sin((t * Math.PI * 2) / 5.2);
+    var sizeMul = p.size * (1 + p.breath * 0.022 * breathS) + micE * 0.13 + amp * 0.07 + pulse * 0.07 - flash * 0.05;
+    U.flow = flowPhase;
+    U.spin = spinPhase;
+    U.swirl = p.swirl + flash * 0.3;
+    U.deform = p.deform + flash * 0.05;
+    U.bands[0] = clamp01(low + micE * 0.75);
+    U.bands[1] = clamp01(mid + micE * 0.45);
+    U.bands[2] = clamp01(high + micE * 0.2);
+    U.bands[3] = clamp01(amp);
+    U.glow = p.glow * (1 + p.breath * 0.1 * breathS) + micE * 0.35 + amp * 0.3 + pulse * 0.35 + flash * 0.25;
+    U.bright = p.bright + amp * 0.15 + micE * 0.1 + pulse * 0.2 + flash * 0.1;
+    U.sat = p.sat;
+    U.light = palettes.light;
+    if (flash > 0.001) {
+      // flash: pull main + cool toward the flash tone, without touching the
+      // blended base colours (so it settles by itself)
+      var fp = tonePal(row.flash);
+      U.main = mixInto(flashMain, colMain, fp.main, flash * 0.85);
+      U.cool = mixInto(flashCool, colCool, fp.cool, flash * 0.85);
+      U.soft = mixInto(flashSoft, colSoft, fp.soft, flash * 0.6);
+      U.sat = p.sat + (1 - p.sat) * flash;
+    } else {
+      U.main = colMain;
+      U.cool = colCool;
+      U.soft = colSoft;
+    }
+    U.deep = colDeep;
+    return sizeMul;
+  }
+  var flashMain = [0, 0, 0];
+  var flashCool = [0, 0, 0];
+  var flashSoft = [0, 0, 0];
+  function mixInto(out, a, b, k) {
+    out[0] = a[0] + (b[0] - a[0]) * k;
+    out[1] = a[1] + (b[1] - a[1]) * k;
+    out[2] = a[2] + (b[2] - a[2]) * k;
+    return out;
+  }
+
+  // framing: centred, radius capped by both axes. Short canvases (the mobile
+  // core strip) get a relatively larger orb; tall ones leave room for the
+  // caption under it.
+  function layout(sizeMul) {
+    var w = cssW;
+    var h = cssH;
+    var compact = h < 300;
+    var cx = w / 2;
+    // tall stage: the caption block (~64px) overlays the bottom of the canvas
+    var cy = compact ? h * 0.5 : (h - 64) / 2 + 6;
+    var R = compact ? Math.min(w * 0.3, h * 0.33) : Math.min(w * 0.25, (h - 64) * 0.34, 200);
+    var edge = Math.min(cx, cy, w - cx, h - cy);
+    U.cx = cx * scale;
+    U.cy = cy * scale;
+    U.R = Math.max(4, R * sizeMul * scale);
+    U.maxD = Math.max(1.15, (edge * scale) / U.R);
+  }
+
+  // ---- frame loop ----------------------------------------------------------------
   var raf = 0;
   var last = 0;
-  var t0 = (window.performance || Date).now();
+  var frameNo = 0;
+  var t0 = now();
 
-  function frame(now) {
+  function frame(ts) {
     raf = destroyed ? 0 : requestAnimationFrame(frame);
-    if (!canvas.clientWidth) return;
-    if (canvas.width === 0) sizeCanvas();
-    var dt = Math.min(64, now - (last || now));
-    last = now;
-    var t = (now - t0) / 1000;
+    if (!canvas.clientWidth || !renderer) return;
+    if (canvas.width <= 1 || cssW !== canvas.clientWidth || cssH !== canvas.clientHeight) sizeCanvas();
+    var dt = last ? ts - last : 16.7;
+    last = ts;
     noteFrameCost(dt);
-
-    // --- real signal envelopes ---
-    var lv = getAudioLevels ? getAudioLevels() : null;
-    if (lv) {
-      levels = lv;
-      var tgt = clamp01(lv.level + (lv.high || 0) * 0.3);
-      amp += (tgt - amp) * 0.28;
-    } else {
-      levels = null;
-      amp += (ampFallback - amp) * 0.28;
-      ampFallback *= 0.88; // decay between server tts.amp events
-    }
-    mic += (micTarget - mic) * 0.2;
-    micTarget *= 0.9; // decay between mic worklet callbacks
-    if (mic > 0.42 && t - lastRippleT > 0.42) {
-      lastRippleT = t;
-      ripples.push({ r: 0.34, a: 0.42 });
-    }
-
-    // --- exponential blend toward the state's parameter row ---
-    var target = CORE_STATES[state] || CORE_STATES.idle;
-    if (!p) p = { rad: target.rad, spin: target.spin, noise: target.noise, glow: target.glow, mode: target.mode, col: target.col.slice() };
-    var k = reduced ? 1 : 1 - Math.exp(-dt / BLEND_TAU_MS);
-    p.rad += (target.rad - p.rad) * k;
-    p.spin += (target.spin - p.spin) * k;
-    p.noise += (target.noise - p.noise) * k;
-    p.glow += (target.glow - p.glow) * k;
-    for (var i = 0; i < 3; i++) p.col[i] += (target.col[i] - p.col[i]) * k;
-    p.mode = target.mode;
-
-    draw(t, dt);
+    dt = Math.min(64, dt);
+    var t = (ts - t0) / 1000;
+    var sizeMul = update(dt, t);
+    frameNo++;
+    // offline is near-still: half rate saves the battery
+    if (activeState() === "offline" && frameNo & 1) return;
+    layout(sizeMul);
+    renderer.render(U);
   }
 
-  function draw(t, dt) {
-    var ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    var dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1);
-    var W = canvas.width;
-    var H = canvas.height;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-    ctx.scale(dpr, dpr);
-    var w = W / dpr;
-    var h = H / dpr;
-    var cx = w / 2;
-    // compact framing (prototype `_draw`): short canvases — the mobile
-    // shell's core strip — center the core vertically and cap the radius by
-    // BOTH axes so the lattice sits balanced above the conversation instead
-    // of clipping against the caption block.
-    var compact = h < 300;
-    var cy = compact ? h * 0.5 : h / 2 - 6;
-    var R = compact ? Math.min(w * 0.3, h * 0.4) : Math.min(w, h) * 0.29;
-    var cr = Math.round(p.col[0]);
-    var cg = Math.round(p.col[1]);
-    var cb = Math.round(p.col[2]);
-    var col = function (a) {
-      return "rgba(" + cr + "," + cg + "," + cb + "," + a + ")";
-    };
-    rebuildSprites(cr, cg, cb);
-    var spinT = reduced ? 0.6 : t;
-
-    // atmosphere (cached sprite, alpha = glow)
-    var ar = R * 2.9;
-    ctx.globalAlpha = clamp01(p.glow);
-    ctx.drawImage(atmosSprite, cx - ar, cy - ar, ar * 2, ar * 2);
-    ctx.globalAlpha = 1;
-
-    // horizon grid
-    if (degrade < 2) {
-      ctx.lineWidth = 1;
-      for (var gi = 0; gi < 3; gi++) {
-        var rr = R * (1.5 + gi * 0.42);
-        var tilt = 0.19 + gi * 0.02;
-        var rot = spinT * (0.05 + gi * 0.015) * (gi % 2 ? -1 : 1);
-        ctx.strokeStyle = col(0.05 - gi * 0.011);
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, rr, rr * tilt, rot, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    }
-
-    // particle field
-    if (!reduced && degrade < 1) {
-      for (var qi = 0; qi < parts.length; qi++) {
-        var q = parts[qi];
-        q.y -= 0.00012 * q.z * (dt / 16);
-        if (q.y < -0.05) {
-          q.y = 1.05;
-          q.x = Math.random();
-        }
-        var px = q.x * w + Math.sin(spinT * 0.2 + q.z * 9) * 6;
-        var py = q.y * h;
-        ctx.fillStyle = col(0.05 + q.s * 0.1);
-        ctx.fillRect(px, py, 1.1, 1.1);
-      }
-    }
-
-    // lattice
-    var yaw = spinT * p.spin * 2.2;
-    var pitch = 0.42 + Math.sin(spinT * 0.24) * 0.1;
-    var cyw = Math.cos(yaw);
-    var syw = Math.sin(yaw);
-    var cp = Math.cos(pitch);
-    var sp = Math.sin(pitch);
-    var rad = R * p.rad * (1 + amp * 0.14);
-    var step = degrade >= 3 ? 2 : 1;
-    for (var vi = 0; vi < N; vi += step) {
-      var v = pts[vi];
-      var n = reduced ? 0 : Math.sin(vi * 1.77 + spinT * 1.15) * 0.5 + Math.sin(vi * 4.13 - spinT * 0.7) * 0.5;
-      var d = 1 + n * p.noise * 0.34 + amp * 0.1 * Math.sin(vi * 0.7 + spinT * 6);
-      var x = v[0] * d;
-      var y = v[1] * d;
-      var z = v[2] * d;
-      var x2 = x * cyw + z * syw;
-      var z2 = -x * syw + z * cyw;
-      var y2 = y * cp - z2 * sp;
-      var z3 = y * sp + z2 * cp;
-      var per = 2.7 / (2.7 - z3);
-      proj[vi] = [cx + x2 * rad * per, cy + y2 * rad * per, z3, per];
-    }
-    ctx.lineWidth = 1;
-    for (var ei = 0; ei < edges.length; ei += step) {
-      var e = edges[ei];
-      if (step > 1 && (e[0] % 2 || e[1] % 2)) continue;
-      var a = proj[e[0]];
-      var b = proj[e[1]];
-      if (!a || !b) continue;
-      var dep = (a[2] + b[2]) / 2;
-      var al = (0.06 + Math.max(0, dep + 0.9) * 0.13) * (0.55 + p.glow * 0.6);
-      ctx.strokeStyle = col(Math.min(0.5, al));
-      ctx.beginPath();
-      ctx.moveTo(a[0], a[1]);
-      ctx.lineTo(b[0], b[1]);
-      ctx.stroke();
-    }
-    for (var pi = 0; pi < N; pi += step) {
-      var pv = proj[pi];
-      if (!pv || pv[2] < -0.25) continue;
-      var s = 0.7 + pv[3] * 0.5;
-      ctx.fillStyle = col(0.14 + Math.max(0, pv[2]) * 0.4);
-      ctx.fillRect(pv[0] - s / 2, pv[1] - s / 2, s, s);
-    }
-
-    // volumetric shell (prototype `_draw`): three great circles counter-
-    // rotating against the lattice — same degradation tier as the horizon
-    // grid, skipped entirely under reduced motion.
-    if (!reduced && degrade < 2) {
-      var yaw2 = -yaw * 0.62;
-      var c2 = Math.cos(yaw2);
-      var s2 = Math.sin(yaw2);
-      var SHELL_AXES = [
-        [0, 1, 2],
-        [1, 2, 0],
-        [2, 0, 1],
-      ];
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = col(0.05 + p.glow * 0.06);
-      for (var sa = 0; sa < 3; sa++) {
-        var ax = SHELL_AXES[sa];
-        var shellR = rad * (1.02 + sa * 0.008);
-        ctx.beginPath();
-        var started = false;
-        for (var si = 0; si <= 56; si++) {
-          var th = (si / 56) * Math.PI * 2 + sa * 0.7;
-          var sv = [0, 0, 0];
-          sv[ax[0]] = Math.cos(th);
-          sv[ax[1]] = Math.sin(th);
-          var sx2 = sv[0] * c2 + sv[2] * s2;
-          var sz2 = -sv[0] * s2 + sv[2] * c2;
-          var sy2 = sv[1] * cp - sz2 * sp;
-          var sz3 = sv[1] * sp + sz2 * cp;
-          if (sz3 < -0.55) {
-            started = false;
-            continue;
-          }
-          var sper = 2.7 / (2.7 - sz3);
-          var sX = cx + sx2 * shellR * sper;
-          var sY = cy + sy2 * shellR * sper;
-          started ? ctx.lineTo(sX, sY) : ctx.moveTo(sX, sY);
-          started = true;
-        }
-        ctx.stroke();
-      }
-    }
-
-    // nucleus (cached sprite bloom + vector ring — no shadowBlur)
-    var nr = rad * (0.3 + amp * 0.22 + (p.mode === "pulse" ? 0.12 : 0));
-    var nd = nr * 2.4;
-    ctx.globalAlpha = Math.min(0.95, 0.5 + p.glow * 0.4 + amp * 0.3);
-    ctx.drawImage(nucSprite, cx - nd, cy - nd, nd * 2, nd * 2);
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = col(0.42 + amp * 0.4);
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, nr * 0.72, 0, Math.PI * 2);
-    ctx.stroke();
-
-    if (reduced) {
-      drawStaticRing(ctx, cx, cy, R, col);
-      return;
-    }
-    drawMode(ctx, p.mode, cx, cy, R, t, col);
+  function renderStatic() {
+    if (!renderer) return;
+    sizeCanvas();
+    if (!cssW || !cssH) return;
+    snapToTarget();
+    var t = (now() - t0) / 1000;
+    var sizeMul = update(16, t);
+    layout(sizeMul);
+    renderer.render(U);
   }
 
-  function drawStaticRing(ctx, cx, cy, R, col) {
-    ctx.setLineDash([2, 6]);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = col(0.3);
-    ctx.beginPath();
-    ctx.arc(cx, cy, R * 1.32, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  function drawMode(ctx, mode, cx, cy, R, t, col) {
-    var i, a, ph, rr, x, y, n;
-    if (mode === "open") {
-      // mic-reactive expanding rings + aperture arc (listening)
-      for (i = ripples.length - 1; i >= 0; i--) {
-        var rp = ripples[i];
-        rp.r += 0.012;
-        rp.a *= 0.965;
-        if (rp.a < 0.01 || rp.r > 2.2) {
-          ripples.splice(i, 1);
-          continue;
-        }
-        ctx.strokeStyle = col(rp.a);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(cx, cy, R * rp.r, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      var arc = 0.5 + mic * 1.1;
-      ctx.strokeStyle = col(0.5);
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, R * 1.36, -Math.PI / 2 - arc / 2, -Math.PI / 2 + arc / 2);
-      ctx.stroke();
-    } else if (mode === "bands") {
-      // radial spectrum spokes (speaking) — length rides the analyser's
-      // real RMS; when the tap provides low/mid/high the spokes are tilted
-      // by actual spectral content (lows at the bottom, highs at the top).
-      n = 34;
-      for (i = 0; i < n; i++) {
-        a = (i / n) * Math.PI * 2 - Math.PI / 2;
-        var band = Math.abs(Math.sin(i * 1.7 + t * 6.1)) * 0.5 + Math.abs(Math.sin(i * 0.9 + t * 11.3)) * 0.5;
-        if (levels) {
-          var vertical = (Math.sin(a) + 1) / 2; // 0 = top of the ring  1 = bottom
-          var spec = (levels.low || 0) * vertical + (levels.mid || 0) * (1 - Math.abs(vertical - 0.5) * 2) + (levels.high || 0) * (1 - vertical);
-          band *= 0.4 + 1.1 * clamp01(spec);
-        }
-        var len = R * (0.16 + amp * band * 0.72);
-        var r0 = R * 1.2;
-        ctx.strokeStyle = col(0.14 + amp * band * 0.5);
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
-        ctx.lineTo(cx + Math.cos(a) * (r0 + len), cy + Math.sin(a) * (r0 + len));
-        ctx.stroke();
-      }
-    } else if (mode === "orbit") {
-      // three counter-rotating thought orbits (thinking)
-      for (i = 0; i < 3; i++) {
-        rr = R * (1.18 + i * 0.16);
-        var spd = (i % 2 ? -1 : 1) * (0.5 + i * 0.22);
-        n = 26 - i * 5;
-        for (var j = 0; j < n; j++) {
-          a = (j / n) * Math.PI * 2 + t * spd;
-          var fl = 0.35 + 0.65 * Math.pow(Math.max(0, Math.sin(a * 2 + t)), 2);
-          ctx.fillStyle = col(0.1 + fl * 0.42);
-          x = cx + Math.cos(a) * rr;
-          y = cy + Math.sin(a) * rr * 0.34;
-          ctx.beginPath();
-          ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    } else if (mode === "resolve") {
-      // settling waveform + converging droplets (transcribing)
-      n = 40;
-      ctx.strokeStyle = col(0.4);
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      for (i = 0; i <= n; i++) {
-        x = cx - R * 1.5 + (i / n) * R * 3;
-        var decay = 1 - Math.abs(i / n - 0.5) * 1.6;
-        y = cy + R * 1.62 + Math.sin(i * 0.9 + t * 9) * R * 0.16 * Math.max(0, decay);
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      for (i = 0; i < 16; i++) {
-        ph = (t * 0.55 + i / 16) % 1;
-        a = i * 2.4;
-        rr = R * (1.7 - ph * 1.3);
-        ctx.fillStyle = col(0.5 * (1 - Math.abs(ph - 0.5) * 1.6));
-        ctx.beginPath();
-        ctx.arc(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr * 0.7, 1.4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (mode === "stars") {
-      // memory constellation: one node per real memory hit, pulled inward
-      // along a tethered arc toward the core.
-      var items = hits.length ? hits.slice(0, 6) : [0, 1, 2];
-      for (i = 0; i < items.length; i++) {
-        a = -Math.PI * 0.72 + i * 0.5 + Math.sin(t * 0.3 + i) * 0.05;
-        ph = (t * 0.4 + i * 0.33) % 1;
-        rr = R * (2.05 - ph * 0.72);
-        x = cx + Math.cos(a) * rr;
-        y = cy + Math.sin(a) * rr * 0.78;
-        ctx.strokeStyle = col(0.1 + (1 - ph) * 0.18);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(cx, cy);
-        ctx.stroke();
-        ctx.fillStyle = col(0.35 + (1 - ph) * 0.45);
-        ctx.beginPath();
-        ctx.arc(x, y, 2.6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = col(0.18);
-        ctx.beginPath();
-        ctx.arc(x, y, 6 + Math.sin(t * 2 + i) * 1.2, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    } else if (mode === "radial") {
-      // capability scan: 12 spokes lighting up in rotation
-      n = 12;
-      for (i = 0; i < n; i++) {
-        a = (i / n) * Math.PI * 2 + t * 0.12;
-        var on = i % 3 === Math.floor(t * 1.6) % 3;
-        var r0b = R * 1.24;
-        var len2 = R * (on ? 0.4 : 0.2);
-        ctx.strokeStyle = col(on ? 0.5 : 0.14);
-        ctx.lineWidth = on ? 2 : 1;
-        ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * r0b, cy + Math.sin(a) * r0b * 0.9);
-        ctx.lineTo(cx + Math.cos(a) * (r0b + len2), cy + Math.sin(a) * (r0b + len2) * 0.9);
-        ctx.stroke();
-        if (on) {
-          ctx.fillStyle = col(0.6);
-          ctx.beginPath();
-          ctx.arc(cx + Math.cos(a) * (r0b + len2), cy + Math.sin(a) * (r0b + len2) * 0.9, 2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    } else if (mode === "arc") {
-      // orbital progress arc (tool / worker_progress) — indeterminate, a
-      // function of time-in-state only (no fabricated progress values)
-      rr = R * 1.34;
-      ctx.strokeStyle = col(0.1);
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, rr, 0, Math.PI * 2);
-      ctx.stroke();
-      var head = (t * 0.85) % (Math.PI * 2);
-      ctx.strokeStyle = col(0.62);
-      ctx.lineWidth = 2.4;
-      ctx.beginPath();
-      ctx.arc(cx, cy, rr, head, head + 1.05);
-      ctx.stroke();
-      ctx.fillStyle = col(0.8);
-      ctx.beginPath();
-      ctx.arc(cx + Math.cos(head + 1.05) * rr, cy + Math.sin(head + 1.05) * rr, 2.4, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (mode === "transfer") {
-      // delegating: bezier channel opens toward the work column with
-      // travelling packets
-      var x1 = cx;
-      var y1 = cy;
-      var x2 = cx + R * 1.85;
-      var y2 = cy + R * 0.9;
-      ctx.strokeStyle = col(0.14);
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.quadraticCurveTo(cx + R, cy + R * 1.2, x2, y2);
-      ctx.stroke();
-      for (i = 0; i < 5; i++) {
-        ph = (t * 0.65 + i / 5) % 1;
-        var mt = 1 - ph;
-        var bx = mt * mt * x1 + 2 * mt * ph * (cx + R) + ph * ph * x2;
-        var by = mt * mt * y1 + 2 * mt * ph * (cy + R * 1.2) + ph * ph * y2;
-        ctx.fillStyle = col(0.7 * (1 - ph * 0.7));
-        ctx.beginPath();
-        ctx.arc(bx, by, 2.1, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.strokeStyle = col(0.4);
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.arc(x2, y2, 9 + Math.sin(t * 3) * 1.4, 0, Math.PI * 2);
-      ctx.stroke();
-    } else if (mode === "pulse") {
-      // done: ONE outward pulse ring, phase = time since entering the state
-      ph = (t - stateSince) * 0.9;
-      if (ph >= 0 && ph <= 1) {
-        ctx.strokeStyle = col(0.5 * (1 - ph));
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(cx, cy, R * (1.1 + ph * 0.9), 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    }
-    // "calm": no overlay — the breathing lattice/nucleus carry the state
-  }
-
-  // ---- loop control ---------------------------------------------------------
   function startLoop() {
     if (destroyed || raf || reduced || document.hidden) return;
     last = 0;
+    warm = 0;
     raf = requestAnimationFrame(frame);
   }
   function stopLoop() {
@@ -587,14 +352,6 @@ export function createCore(canvas) {
       cancelAnimationFrame(raf);
       raf = 0;
     }
-  }
-  function renderStatic() {
-    // reduced motion: a single settled frame per state change
-    sizeCanvas();
-    var target = CORE_STATES[state] || CORE_STATES.idle;
-    p = { rad: target.rad, spin: target.spin, noise: target.noise, glow: target.glow, mode: target.mode, col: target.col.slice() };
-    var t = ((window.performance || Date).now() - t0) / 1000;
-    draw(t, 16);
   }
 
   function onVisibility() {
@@ -604,26 +361,42 @@ export function createCore(canvas) {
   document.addEventListener("visibilitychange", onVisibility);
 
   var ro = null;
+  function onResize() {
+    sizeCanvas();
+    if (reduced) renderStatic();
+  }
   if (window.ResizeObserver) {
-    ro = new ResizeObserver(function () {
-      sizeCanvas();
-      if (reduced) renderStatic();
-    });
+    ro = new ResizeObserver(onResize);
     ro.observe(canvas);
   } else {
-    window.addEventListener("resize", sizeCanvas);
+    window.addEventListener("resize", onResize);
+  }
+
+  var UI = window.HermesUI;
+  var offTheme = null;
+  if (UI && UI.onThemeChange) {
+    offTheme = UI.onThemeChange(function () {
+      palettes = buildPalettes();
+      if (reduced) renderStatic();
+    });
   }
 
   sizeCanvas();
   startLoop();
 
-  // ---- API ------------------------------------------------------------------
+  function enterState(v) {
+    void v;
+    stateSince = (now() - t0) / 1000;
+    if (reduced) renderStatic();
+  }
+
+  // ---- API ---------------------------------------------------------------------------
   return {
     setState: function (v) {
-      if (v === state) return;
-      state = CORE_STATES[v] ? v : "idle";
-      stateSince = ((window.performance || Date).now() - t0) / 1000;
-      if (reduced) renderStatic();
+      var next = ORB_STATES[v] ? v : "idle";
+      if (next === state) return;
+      state = next;
+      if (!forced) enterState(next);
     },
     setReducedMotion: function (v) {
       reduced = !!v;
@@ -644,18 +417,54 @@ export function createCore(canvas) {
       ampFallback = clamp01(typeof v === "number" ? v : 0);
     },
     onMicLevel: function (v) {
-      micTarget = clamp01(typeof v === "number" ? v : 0);
+      micTarget = Math.max(micTarget, clamp01(typeof v === "number" ? v : 0));
     },
     resize: function () {
       sizeCanvas();
       if (reduced) renderStatic();
+    },
+    // QA hooks (window.__jarvisOrb): pin a state / feed synthetic levels /
+    // read frame timings. Inert unless called.
+    debug: {
+      force: function (v) {
+        forced = v && ORB_STATES[v] ? v : null;
+        enterState(forced || state);
+      },
+      levels: function (fn) {
+        fakeLevels = typeof fn === "function" ? fn : null;
+      },
+      mic: function (v) {
+        micTarget = clamp01(v);
+      },
+      stats: function () {
+        var n = Math.min(dtN, dts.length);
+        var arr = Array.prototype.slice.call(dts, 0, n).sort(function (a, b) {
+          return a - b;
+        });
+        var sum = 0;
+        for (var i = 0; i < n; i++) sum += arr[i];
+        return {
+          renderer: renderer ? renderer.kind : "none",
+          scale: scale,
+          level: level,
+          emaMs: +ema.toFixed(2),
+          canvas: [canvas.width, canvas.height],
+          frames: n,
+          avgMs: n ? +(sum / n).toFixed(2) : null,
+          p95Ms: n ? +arr[Math.floor(n * 0.95)].toFixed(2) : null,
+          maxMs: n ? +arr[n - 1].toFixed(2) : null,
+        };
+      },
     },
     destroy: function () {
       destroyed = true;
       stopLoop();
       document.removeEventListener("visibilitychange", onVisibility);
       if (ro) ro.disconnect();
-      else window.removeEventListener("resize", sizeCanvas);
+      else window.removeEventListener("resize", onResize);
+      if (offTheme) offTheme();
+      if (renderer) renderer.destroy();
+      renderer = null;
     },
   };
 }

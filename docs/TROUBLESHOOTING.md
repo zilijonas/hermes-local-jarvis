@@ -21,3 +21,11 @@ Repo: `/Users/agent/ai/repos/hermes-jarvis-voice`. Start with
 | high RAM usage | `curl -s 127.0.0.1:8090/v1/status`, `memory_pressure -Q` (trustworthy). Do NOT read `vm_stat`'s "Pages free" as headroom - file-backed pages are reclaimable and it reads alarmingly low when nothing is wrong. | The router idle-unloads gpt-oss-20b after 900 s on its own. If memory is genuinely tight, that's a model-router concern, not a jarvisd one - jarvisd's own footprint (STT + TTS + service) is well under 1 GB. |
 | where are the logs | `~/ai/state/jarvis-voice/logs/`: `jarvisd.log` (app's own rotating log), `jarvisd.out.log`/`jarvisd.err.log` (LaunchAgent-captured stdout/stderr - uvicorn access lines and anything printed/crashed outside the app's logger). No separate dashboard logs here - those belong to `local.hermesagent.dashboard`. | See `docs/MAINTENANCE.md` §Log rotation for rotation/retention details. |
 | false `Unauthorized` on `/api/plugins/...` or `/api/dashboard/plugins/rescan` | A bare `curl` against these dashboard routes returns `{"detail":"Unauthorized"}` - this is correct behavior, not a bug. The dashboard gates its API behind a per-session token (`window.__HERMES_SESSION_TOKEN__`, header `X-Hermes-Session-Token`). | From a browser (already authenticated) it works. From the CLI, either copy the token out of the browser's Network tab, or hit jarvisd directly on `127.0.0.1:9140` (no auth, loopback-only) instead of going through the dashboard proxy on 9120. |
+
+## Phone (iPhone Safari / PWA)
+| Symptom | Cause / fix |
+|---|---|
+| No sound from Jarvis | Tap anywhere once after opening (audio unlocks on a gesture). If it still fails, force-close the home-screen app so it loads the current bundle. System tab shows the output path (iOS: `direct`). |
+| Tapping Tasks/Memory/Activity only darkens the screen, or nothing is clickable | Old hermes-ui (< 1.5.5) overlay bug in WebKit. Check `hermes-plugin/dashboard/dist/hui/VERSION`, run `~/ai/repos/hermes-ui/bin/hui-sync --all`. |
+| Live caption loses the start of the sentence | Fixed 2026-09-28: the mic-left-on turn now ends after 2.5 s of silence (`vad.ptt_silence_ms`). |
+| Page zooms when typing | Inputs must be 16px on touch (hermes-ui 1.5.5). |

@@ -81,6 +81,16 @@ class VadEndpointer:
         self._true_speech_frames = 0
         self.reset()
 
+    def set_mode(self, mode: str, ptt_silence_ms: int = 2500) -> None:
+        """Push-to-talk: a long silence cap; hands-free: the configured endpoint."""
+        if not hasattr(self, "_handsfree_endpoint_ms"):
+            self._handsfree_endpoint_ms = self.endpoint_ms
+        self.endpoint_ms = ptt_silence_ms if mode == "ptt" else self._handsfree_endpoint_ms
+
+    @property
+    def in_speech(self) -> bool:
+        return self._in_speech
+
     def reset(self) -> None:
         """Clear all buffered/in-progress state. Config is untouched."""
         self._byte_buf = bytearray()

@@ -118,7 +118,7 @@ function CanvasStage(props) {
       </div>
       <div style=${{ position: "absolute", left: 20, top: 16, display: "flex", flexDirection: "column", gap: 5, pointerEvents: "none" }}>
         <div className="hui-t-micro">INTELLIGENCE CORE</div>
-        <div className="hui-t-micro">${(s.reducedMotion ? "STATIC · " : "LATTICE · ") + coreMode}</div>
+        <div className="hui-t-micro">${(s.reducedMotion ? "STATIC · " : "ORB · ") + coreMode}</div>
       </div>
     </div>`;
 }

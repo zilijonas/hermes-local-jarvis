@@ -58,9 +58,12 @@ class Pipeline:
         self.workers = workers
         self.memory = memory_mod
         self.caps = caps_router
-        self.vad, self.vad_label = build_endpointer(dict(cfg.data.get("vad") or {}))
+        vad_cfg = dict(cfg.data.get("vad") or {})
+        self.vad, self.vad_label = build_endpointer(vad_cfg)
+        self._ptt_silence_ms = int(vad_cfg.get("ptt_silence_ms", 2500))
         self.state = "idle"
         self.mode = "ptt"
+        self.vad.set_mode("ptt", self._ptt_silence_ms)
         self.mic_active = False
         stt_cfg = cfg.data.get("stt") or {}
         self._partial_every = max(0.2, float(stt_cfg.get("partial_interval_ms", 400)) / 1000)
@@ -162,15 +165,15 @@ class Pipeline:
         asyncio.get_running_loop().create_task(self.mediator.warmup())
 
     def mic_stop(self) -> None:
-        """PTT release (or hands-free mic off): what is buffered becomes the utterance."""
-        was_ptt = self.mode == "ptt"
-        in_speech = getattr(self.vad, "in_speech", False) or getattr(self.vad, "_in_speech", False)
+        """Mic off / PTT release: an utterance still in progress becomes the turn.
+        One that already ended on silence was spawned then; nothing is sent twice."""
+        in_speech = getattr(self.vad, "in_speech", False)
         self.mic_active = False
         pcm = bytes(self._utt_buf) + self.vad.flush()
         utt_id = self._utt_id
         self._utt_buf.clear()
         self.vad.reset()
-        if len(pcm) >= 8000 and (was_ptt or in_speech):  # ≥250 ms
+        if in_speech and len(pcm) >= 8000:  # ≥250 ms
             self._spawn_turn(pcm, utt_id)
         elif not self._busy():
             self._set_state("idle")
@@ -178,11 +181,10 @@ class Pipeline:
     def feed_audio(self, chunk: bytes) -> None:
         if not self.mic_active:
             return
-        if self.mode == "ptt":
-            # Push-to-talk: the key decides where the utterance ends, not pauses.
-            self._utt_buf.extend(chunk)
-            self._maybe_partial()
-            return
+        # Both modes run the endpointer. Push-to-talk only differs in HOW a turn
+        # ends: a 2.5 s silence (or releasing / turning the mic off), never Smart
+        # Turn. Before this, a mic left on after speaking kept recording silence
+        # and the live caption (a sliding window) lost the sentence word by word.
         for kind, payload in self.vad.feed(chunk):
             if kind == "speech_start":
                 self._new_utterance()
@@ -211,6 +213,10 @@ class Pipeline:
         now = time.monotonic()
         if len(self._utt_buf) < 12800 or now - self._last_partial_at < self._partial_every:
             return  # <0.4 s of audio, or too soon
+        if getattr(self.vad, "last_is_speech", True):
+            self._last_voice_at = now
+        elif now - getattr(self, "_last_voice_at", now) > 0.6:
+            return  # the caption can't change while nobody speaks
         self._last_partial_at = now
         snapshot, utt_id = bytes(self._utt_buf), self._utt_id
 
@@ -226,7 +232,7 @@ class Pipeline:
         """User speaks again before Jarvis made a sound: the last turn was a fragment.
         Abort it (no side effects yet, nothing audible) and carry its text forward."""
         cur = self._current
-        if (self.mode != "vad" or cur is None or cur.get("aborted") or cur["spoke"]
+        if (cur is None or cur.get("aborted") or cur["spoke"]
                 or cur["side_effects"] or self._pending or self._carry is not None
                 or self.audible() or time.monotonic() - cur["t_endpoint"] > 4.0):
             return
@@ -255,6 +261,7 @@ class Pipeline:
             if mode in ("ptt", "vad"):
                 self.mode = mode
                 self.vad.reset()
+                self.vad.set_mode(mode, self._ptt_silence_ms)
                 self.bus.publish({"t": "state", "value": self.state,
                                   "detail": f"mode={mode}"})
         elif t == "barge_in":

@@ -7,7 +7,7 @@ OpenCode Go subscription by default, with the local model as an automatic fallba
 ```
  browser: main Hermes dashboard, tab /jarvis (https://macmini-ai.tail9102ce.ts.net/jarvis)
    mic: getUserMedia (echoCancellation) to AudioWorklet 16 kHz PCM ──────────+  WS
-   speaker: FIFO player worklet to loopback RTCPeerConnection to <audio>  <───|  /api/plugins/jarvis-voice/ws
+   speaker: FIFO player worklet to loopback RTCPeerConnection to <audio> (iOS: direct, system AEC)  <───|  /api/plugins/jarvis-voice/ws
             (so the browser's echo canceller hears Jarvis's own voice)      │  (hermes-plugin/dashboard/plugin_api.py
    state, live captions, tasks, memory hits, brain + worker selectors       │   is a thin proxy)
                                                                             ▼
@@ -43,7 +43,7 @@ minimax-m3 streams its `<think>` block inside `content`; the mediator strips thi
 anything reaches TTS. qwen3.8-flash measured up to 14 s to first word and is not used.
 
 ## Turn taking
-- **Push to talk**: everything between press and release is one utterance. Pauses never split it.
+- **Push to talk / mic button**: pauses never split a sentence. A turn ends on release, on mic off, or after 2.5 s of silence (so a mic left on doesn't record silence forever); the next sentence is a new turn, or merges if Jarvis hasn't spoken yet.
 - **Hands-free**: after 250 ms of silence Smart Turn scores the utterance; "finished" ends the
   turn, "not finished" keeps listening (`turn.pending` to "go on..." in the UI) up to 1.8 s.
 - **Fragment merge**: if the user speaks again before Jarvis has made a sound and before any
@@ -89,3 +89,11 @@ infrastructure reasons (429, 5xx, network, quota) retry once on the local backen
 jarvisd owns all state in jarvis.db (WAL). The UI reconnects and replays open tasks. On boot,
 tasks whose worker PID is gone become `needs_review`. `scripts/install.sh` / `update.sh` /
 `uninstall.sh` / `rollback.sh` manage the LaunchAgent and back up to `~/ai/backups/` first.
+
+## Mobile (iPhone Safari / home-screen app)
+- Phones open in fullscreen (below the host bar). Text inputs are 16px so Safari doesn't zoom.
+- Audio unlocks on the first tap anywhere (iOS keeps a context created outside a gesture silent),
+  uses the hardware sample rate on iOS, and plays straight to the speaker there.
+- Sheets (Tasks / Memory / Activity) rely on hermes-ui 1.5.5: older versions stranded them off-screen
+  behind a dark scrim in WebKit and left an invisible scrim that blocked every tap.
+- The central visualizer is a WebGL orb (visualizer/orb-gl.js) with a Canvas 2D fallback (orb-2d.js).

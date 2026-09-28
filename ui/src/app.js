@@ -284,7 +284,9 @@ export function App() {
       lastEventTs: 0,
       offlineDismissed: false,
       fullscreen: typeof document !== "undefined" && !!(document.fullscreenElement || document.webkitFullscreenElement),
-      pseudoFullscreen: false,
+      // Phones open straight into fullscreen (user request 2026-09-28): the host
+      // chrome around a voice UI only wastes a small screen. The button still exits.
+      pseudoFullscreen: typeof window !== "undefined" && window.innerWidth < MOBILE_BREAK,
       noSpeechHint: null,
     });
   }
@@ -480,7 +482,8 @@ export function App() {
         });
         if (announce) {
           var open = countOpenTasks(map);
-          pushTurn("system", "Session resumed · " + open + " open task" + (open === 1 ? "" : "s") + " replayed from jarvis.db");
+          // Reconnect bookkeeping goes to the Activity log, not the conversation.
+          pushTimeline("state", "Session resumed · " + open + " open task" + (open === 1 ? "" : "s") + " replayed from jarvis.db", null, "neutral");
         }
       })
       .catch(function () {
@@ -508,6 +511,15 @@ export function App() {
     // genuinely finished making sound (worklet FIFO ran dry and stayed dry
     // for ~250ms — see audio-out.js's onDrained). The server uses this for
     // its echo guard / barge-in bookkeeping.
+    // Unlock audio on the FIRST real gesture anywhere on the page (tap on a tab,
+    // the composer, the mic...), and again after an iOS PWA resume suspends the
+    // context. Without it iOS never plays a reply that arrives later.
+    function gestureUnlock() {
+      if (audioOut.unlock()) return;
+    }
+    ["pointerdown", "touchend", "keydown"].forEach(function (ev) {
+      document.addEventListener(ev, gestureUnlock, { capture: true, passive: true });
+    });
     var unsubscribeDrained = audioOut.onDrained(function () {
       var socket = wsRef.current;
       if (socket) socket.send({ t: "playback.end", turn_id: store.get().turnId });
@@ -882,6 +894,9 @@ export function App() {
       unsubscribeDrained();
       socket.close();
       mic.teardown();
+      ["pointerdown", "touchend", "keydown"].forEach(function (ev) {
+        document.removeEventListener(ev, gestureUnlock, { capture: true });
+      });
       audioOut.destroy();
       if (visRef.current) {
         visRef.current.destroy();
