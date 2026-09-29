@@ -54,7 +54,7 @@ def test_config_attribute_style_section_access(tmp_path):
     # The voice pipeline (jarvisd/pipeline.py) reads config as cfg.vad.aggressiveness etc.,
     # not just cfg.data["vad"]["aggressiveness"] — both must work against the same live data.
     cfg = config_mod.load_config(tmp_path / "missing.toml")
-    assert cfg.vad.max_pause_ms == cfg.data["vad"]["max_pause_ms"] == 1800
+    assert cfg.vad.max_pause_ms == cfg.data["vad"]["max_pause_ms"] == 2500
     assert cfg.tts.voice == "am_michael"
     assert cfg.budgets.context_card_tokens == 600
     with pytest.raises(AttributeError):

@@ -37,11 +37,14 @@ DEFAULTS: dict[str, Any] = {
             "model": "base.en", "compute": "int8", "device": "cpu", "partial_interval_ms": 400},
     # Hands-free turn taking: Silero VAD + Smart Turn v3 (audio/turn.py). webrtcvad
     # (`engine = "webrtc"`, `endpoint_ms`) is the fallback when the models are missing.
-    "vad": {"engine": "smart_turn", "quiet_ms": 250, "max_pause_ms": 1800,
-            "turn_threshold": 0.5, "min_speech_ms": 200, "endpoint_ms": 800,
-            "aggressiveness": 3,
-            "silero_model": "~/ai/models/silero/silero_vad.onnx",
-            "smart_turn_model": "~/ai/models/smart-turn/smart-turn-v3.2-cpu.onnx"},
+    # 2026-09-29: defaults raised to 2500 ms so a sub-2.5 s intra-utterance pause
+    # stays a single turn; `utt_finalize_ms` is the pipeline-level silence cap.
+    "vad":{"engine":"smart_turn","quiet_ms":250,"max_pause_ms":2500,
+           "turn_threshold":0.5,"min_speech_ms":200,"endpoint_ms":800,
+           "utt_finalize_ms":2500,
+           "aggressiveness":3,
+           "silero_model":"~/ai/models/silero/silero_vad.onnx",
+           "smart_turn_model":"~/ai/models/smart-turn/smart-turn-v3.2-cpu.onnx"},
     "tts": {"voice": "am_michael", "speed": 1.1, "engine": "kokoro", "fallback": "say"},
     "paths": {
         "vault": "~/ai/memory/obsidian-vault",

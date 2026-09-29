@@ -61,6 +61,15 @@ class Pipeline:
         vad_cfg = dict(cfg.data.get("vad") or {})
         self.vad, self.vad_label = build_endpointer(vad_cfg)
         self._ptt_silence_ms = int(vad_cfg.get("ptt_silence_ms", 2500))
+        # Maximum gap tolerated inside a single utterance (ms). After the
+        # endpointer says speech_end the pipeline waits this long before
+        # spawning the turn; if a fresh speech_start arrives within the
+        # window the deferred spawn is cancelled and audio keeps accumulating
+        # into the SAME utt_id. Combined with the endpointer's per-mode
+        # silence cap (also 2.5 s by default), the ONLY legitimate turn-end
+        # triggers become (1) PTT release and (2) silence longer than 2.5 s.
+        self._utt_finalize_ms = int(vad_cfg.get("utt_finalize_ms", 2500))
+        self._pending_finalize: Optional[asyncio.TimerHandle] = None
         self.state = "idle"
         self.mode = "ptt"
         self.vad.set_mode("ptt", self._ptt_silence_ms)
@@ -153,10 +162,34 @@ class Pipeline:
         self._barge_done = False
         return self._utt_id
 
+    def _cancel_pending_finalize(self) -> None:
+        h = self._pending_finalize
+        if h is not None:
+            h.cancel()
+            self._pending_finalize = None
+
+    def _schedule_finalize(self) -> None:
+        """Defer turn spawn until either silence truly exceeds utt_finalize_ms
+        OR a fresh speech_start resumes the same utterance (cancelling this)."""
+        self._cancel_pending_finalize()
+        utt_id = self._utt_id
+        loop = asyncio.get_running_loop()
+        delay = self._utt_finalize_ms / 1000.0
+
+        def _fire() -> None:
+            self._pending_finalize = None
+            pcm = bytes(self._utt_buf)
+            self._utt_buf.clear()
+            if pcm:
+                self._spawn_turn(pcm, utt_id)
+
+        self._pending_finalize = loop.call_later(delay, _fire)
+
     def mic_start(self) -> None:
         self.mic_active = True
         self.vad.reset()
         self._new_utterance()
+        self._cancel_pending_finalize()
         if self.mode == "ptt" and (self._speaking or self.audible()):
             self.barge_in("push to talk")
         if not self._busy():
@@ -166,14 +199,16 @@ class Pipeline:
 
     def mic_stop(self) -> None:
         """Mic off / PTT release: an utterance still in progress becomes the turn.
-        One that already ended on silence was spawned then; nothing is sent twice."""
+        One that already ended on silence was already scheduled as a deferred
+        spawn; finalize it now (don't wait for the timer)."""
         in_speech = getattr(self.vad, "in_speech", False)
         self.mic_active = False
         pcm = bytes(self._utt_buf) + self.vad.flush()
         utt_id = self._utt_id
         self._utt_buf.clear()
+        self._cancel_pending_finalize()
         self.vad.reset()
-        if in_speech and len(pcm) >= 8000:  # ≥250 ms
+        if pcm:
             self._spawn_turn(pcm, utt_id)
         elif not self._busy():
             self._set_state("idle")
@@ -185,11 +220,24 @@ class Pipeline:
         # ends: a 2.5 s silence (or releasing / turning the mic off), never Smart
         # Turn. Before this, a mic left on after speaking kept recording silence
         # and the live caption (a sliding window) lost the sentence word by word.
+        #
+        # Turn-end rule (2026-09-29): the pipeline defers the spawn from a
+        # `speech_end` by utt_finalize_ms; an arriving `speech_start` within
+        # that window cancels the spawn and keeps the same utt_id. The result:
+        # a sub-2.5 s intra-utterance pause never gets its own turn_id.
         for kind, payload in self.vad.feed(chunk):
             if kind == "speech_start":
-                self._new_utterance()
-                self.bus.publish({"t": "vad.speech", "active": True, "utt_id": self._utt_id})
-                self._maybe_continuation()
+                if self._pending_finalize is not None:
+                    # Resume the same utterance: pause was intra-utterance.
+                    self._cancel_pending_finalize()
+                    self.bus.publish({"t": "vad.speech", "active": True,
+                                      "utt_id": self._utt_id})
+                    self.bus.publish({"t": "turn.resume", "utt_id": self._utt_id})
+                else:
+                    self._new_utterance()
+                    self.bus.publish({"t": "vad.speech", "active": True,
+                                      "utt_id": self._utt_id})
+                    self._maybe_continuation()
             elif kind == "chunk":
                 self._utt_buf.extend(payload)
                 self._maybe_partial()
@@ -202,10 +250,8 @@ class Pipeline:
                 self.bus.publish({"t": "vad.speech", "active": True, "utt_id": self._utt_id})
             elif kind == "speech_end":
                 self.bus.publish({"t": "vad.speech", "active": False, "utt_id": self._utt_id})
-                pcm = bytes(payload)
-                utt_id = self._utt_id
-                self._utt_buf.clear()
-                self._spawn_turn(pcm, utt_id)
+                if self._utt_buf:
+                    self._schedule_finalize()
 
     def _maybe_partial(self) -> None:
         if self._partial_task and not self._partial_task.done():

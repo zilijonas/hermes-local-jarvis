@@ -31,13 +31,16 @@ partial_interval_ms = 400
 [vad]
 # Hands-free: Silero VAD + Smart Turn v3 decide when you finished. After quiet_ms
 # of silence Smart Turn is asked; "not finished" keeps listening up to max_pause_ms.
+# 2026-09-29: raised to 2500 ms to match the pipeline's utt_finalize_ms — a
+# sub-2.5 s pause now stays a single turn instead of getting its own turn_id.
 engine = "smart_turn"
 quiet_ms = 250
-max_pause_ms = 1800
+max_pause_ms = 2500
 turn_threshold = 0.5
 min_speech_ms = 200
 endpoint_ms = 800          # webrtcvad fallback only
 aggressiveness = 3         # webrtcvad fallback only
+utt_finalize_ms = 2500     # pipeline-level silence cap (matches max_pause_ms)
 silero_model = "~/ai/models/silero/silero_vad.onnx"
 smart_turn_model = "~/ai/models/smart-turn/smart-turn-v3.2-cpu.onnx"
 

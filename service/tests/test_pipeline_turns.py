@@ -127,7 +127,8 @@ class FakeDB:
 
 
 def _cfg():
-    data = {"vad": {"engine": "webrtc"}, "stt": {"partial_interval_ms": 200}}
+    data = {"vad": {"engine": "webrtc", "utt_finalize_ms": 200},
+            "stt": {"partial_interval_ms": 200}}
     return types.SimpleNamespace(
         data=data, tts=types.SimpleNamespace(voice="v", speed=1.0),
         budgets=types.SimpleNamespace(context_card_tokens=100))
@@ -140,11 +141,52 @@ def make(texts=(), delay=0.0, tts_s=0.2):
     return p, bus
 
 
+class _ScriptedVAD:
+    """Plays back a scripted sequence one event per `feed()` call.
+
+    Mirrors how the real endpointer streams events: each `feed()` returns
+    the NEXT event in the script (consumed one at a time). Used to reproduce
+    a mid-utterance `speech_end` (smart-turn sometimes decides "complete"
+    on a sub-second pause) and verify the pipeline does not split that
+    into two turn_ids unless the silence is genuinely long (>= 2.5 s).
+    """
+    def __init__(self, script):
+        # script: list of (kind, payload_bytes_or_None)
+        self._script = list(script)
+        self._idx = 0
+        self.in_speech = False
+        self.last_is_speech = False
+        self.use_smart_turn = False
+        self.max_pause_ms = 2500
+        self.mode = "vad"
+
+    def reset(self):
+        self._idx = 0
+
+    def set_mode(self, mode, ptt_silence_ms=2500):
+        self.mode = mode
+        if mode == "ptt":
+            self.use_smart_turn = False
+            self.max_pause_ms = ptt_silence_ms
+
+    def flush(self):
+        return b""
+
+    def feed(self, chunk):
+        if self._idx >= len(self._script):
+            return []
+        ev = self._script[self._idx]
+        self._idx += 1
+        return [ev]
+
+
 async def _settle(p, timeout=3.0):
     t0 = time.monotonic()
     await asyncio.sleep(0.05)
     while time.monotonic() - t0 < timeout:
-        if not p._busy() and (p._drainer is None or p._drainer.done()):
+        pending_finalize = getattr(p, "_pending_finalize", None)
+        if (not p._busy() and (p._drainer is None or p._drainer.done())
+                and pending_finalize is None):
             return
         await asyncio.sleep(0.02)
 
@@ -297,6 +339,77 @@ def test_sentence_cut_keeps_decimals_and_abbrev():
 def test_speakable_cleans_markdown_and_money():
     out = speakable("**Done!** It costs $64,250 — see [docs](https://a.b/c) 🎉")
     assert "*" not in out and "64,250 dollars" in out and "http" not in out and "docs" in out
+
+
+@pytest.mark.asyncio
+async def test_mid_utterance_pause_keeps_single_turn_id():
+    """Regression: a sub-2.5 s mid-sentence pause must NOT split one utterance
+    into two turn_ids. Reproduces the silero + smart-turn edge case where
+    Smart Turn prematurely declared "complete" on a ~600 ms pause.
+
+    Scripted endpointer emits:
+        speech_start, chunk*, speech_end (~600 ms in), chunk*,
+        speech_start (user resumes ~600 ms later), chunk*, speech_end (real end)
+    The pipeline must end with EXACTLY ONE `stt.final` event with merged=False
+    and ONE mediator.turn() call — a single turn_id across the whole utterance.
+    """
+    bus = FakeBus()
+    p = pl.Pipeline(_cfg(), FakeDB(), bus,
+                    FakeSTT(["remind me to call mom tomorrow", "second text"]),
+                    FakeTTS(seconds_per_sentence=0.8), FakeMediator(delay=0.4),
+                    FakeWorkers(), None, FakeCaps())
+    # Scripted endpointer: speech_start, 2 chunks, premature speech_end,
+    # one silence chunk, speech_start (resume), one chunk, real speech_end.
+    p.vad = _ScriptedVAD([
+        ("speech_start", None),
+        ("chunk", b"\x01\x00" * 4800),
+        ("chunk", b"\x01\x00" * 3200),
+        ("speech_end", b"\x01\x00" * 8000),
+        ("chunk", b"\x00\x00" * 1280),
+        ("speech_start", None),
+        ("chunk", b"\x01\x00" * 6400),
+        ("speech_end", b"\x01\x00" * 14400),
+    ])
+    p.mode = "vad"
+    p.mic_start()
+    # Deferred finalize must outlast the mid-utterance pause (< 0.6 s in this
+    # test) so that the resume path cancels it instead of letting the turn
+    # spawn. Production uses the 2.5 s default.
+    p._utt_finalize_ms = 1500
+    # Each feed_audio call drives ONE scripted event.
+    p.feed_audio(b"\x01\x00" * 8000)   # -> speech_start
+    p.feed_audio(b"\x01\x00" * 4800)   # -> chunk
+    p.feed_audio(b"\x01\x00" * 3200)   # -> chunk
+    p.feed_audio(b"\x01\x00" * 3200)   # -> speech_end (premature)
+    # Let the first turn start processing (STT -> mediator -> TTS first chunk).
+    # In production the user pauses ~600 ms; that is enough time for the
+    # first turn to set cur["spoke"]=True via TTS.first_chunk. With
+    # delay=0.5 the FakeMediator returns, then FakeTTS.speak immediately
+    # sends the first chunk (cur["spoke"]=True). The continuation merge
+    # in _maybe_continuation then refuses to merge (cur["spoke"]=True),
+    # so a second turn_id is emitted — the production bug.
+    await asyncio.sleep(0.6)
+    p.feed_audio(b"\x00\x00" * 1280)   # -> chunk (silence)
+    p.feed_audio(b"\x01\x00" * 1600)   # -> speech_start (resume, ~600 ms gap)
+    p.feed_audio(b"\x01\x00" * 6400)   # -> chunk
+    p.feed_audio(b"\x01\x00" * 16000)  # -> speech_end (REAL end)
+    # With the fix: the pipeline deferred both speech_ends; only the LAST
+    # timer is still armed. Sleep long enough that the timer fires AFTER
+    # the second speech_start has cancelled any earlier one (it did, ~0.6 s
+    # after the first speech_end), then the second speech_end at the end
+    # of the stream arms a fresh timer. 1.8 s is enough for > 1.5 s to elapse
+    # without speech_start.
+    await asyncio.sleep(1.8)
+    await _settle(p, timeout=5.0)
+
+    finals = bus.of("stt.final")
+    assert len(finals) == 1, finals
+    assert finals[0]["text"] == "remind me to call mom tomorrow"
+    assert finals[0]["merged"] is False
+    assert len(p.mediator.turns) == 1
+    assert p.mediator.turns[0] == "remind me to call mom tomorrow"
+    turn_ids = {f["turn_id"] for f in finals}
+    assert len(turn_ids) == 1, turn_ids
 
 
 @pytest.mark.asyncio
