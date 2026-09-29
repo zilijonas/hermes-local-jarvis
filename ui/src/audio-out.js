@@ -22,6 +22,10 @@
 // plain audioCtx.destination (today's pre-v2 behavior, no AEC benefit but
 // works everywhere). getDiagnostics() reports which rung is active.
 import { assetUrl } from "./sdk.js";
+import {
+  pcmChunkToFloat32 as _pcmChunkToFloat32,
+  TARGET_SOURCE_RATE as _TARGET_SOURCE_RATE,
+} from "./audio-format.js";
 
 // iOS / iPadOS WebKit (incl. home-screen PWAs). iPadOS reports "MacIntel" + touch.
 var IS_IOS = typeof navigator !== "undefined" &&
@@ -29,7 +33,7 @@ var IS_IOS = typeof navigator !== "undefined" &&
    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
 
 export function createAudioOutput() {
-  var TARGET_SOURCE_RATE = 24000;
+  var TARGET_SOURCE_RATE = _TARGET_SOURCE_RATE;
   var DRAIN_CONFIRM_MS = 250; // matches the server's playback.end echo-guard debounce
   var LOOPBACK_TIMEOUT_MS = 2000;
 
@@ -396,7 +400,11 @@ export function createAudioOutput() {
 
   // `data` is an ArrayBuffer/Int16Array of 24kHz mono s16le PCM (one TTS
   // chunk). Converts to Float32 and, if the context didn't land on 24kHz,
-  // naive-linear-resamples to the context's actual rate before queueing.
+  // windowed-sinc-resamples to the context's actual rate before queueing.
+  // A short raised-cosine fade at every chunk's head and tail smooths out
+  // any discontinuity between adjacent chunks — see audio-format.js.
+  // The fade + resampler add zero buffering latency (they operate on the
+  // chunk in place) and ~5 ms of fade window, well under the 10 ms budget.
   function queueChunk(data) {
     playingFlag = true;
     clearTimeout(confirmDrainTimer);
@@ -404,9 +412,7 @@ export function createAudioOutput() {
       .then(function () {
         if (audioCtx.state === "suspended") audioCtx.resume().catch(function () {});
         var int16 = data instanceof Int16Array ? data : new Int16Array(data);
-        var float32 = int16ToFloat32(int16);
-        var dstRate = audioCtx.sampleRate;
-        var samples = dstRate === TARGET_SOURCE_RATE ? float32 : resampleLinear(float32, TARGET_SOURCE_RATE, dstRate);
+        var samples = _pcmChunkToFloat32(int16, audioCtx.sampleRate);
         workletNode.port.postMessage({ type: "push", samples: samples }, [samples.buffer]);
       })
       .catch(function () {
@@ -488,25 +494,7 @@ export function createAudioOutput() {
   };
 }
 
-function int16ToFloat32(int16) {
-  var out = new Float32Array(int16.length);
-  for (var i = 0; i < int16.length; i++) {
-    var s = int16[i];
-    out[i] = s < 0 ? s / 32768 : s / 32767;
-  }
-  return out;
-}
-
-function resampleLinear(src, srcRate, dstRate) {
-  var ratio = srcRate / dstRate;
-  var outLen = Math.max(1, Math.round(src.length / ratio));
-  var out = new Float32Array(outLen);
-  for (var i = 0; i < outLen; i++) {
-    var pos = i * ratio;
-    var i0 = Math.floor(pos);
-    var i1 = Math.min(i0 + 1, src.length - 1);
-    var frac = pos - i0;
-    out[i] = src[i0] * (1 - frac) + src[i1] * frac;
-  }
-  return out;
-}
+// int16ToFloat32 and resampleLinear moved to audio-format.js so the
+// regression test can import them under Node. queueChunk() now calls
+// pcmChunkToFloat32() there, which handles both the conversion and
+// the boundary fade in one pass.
