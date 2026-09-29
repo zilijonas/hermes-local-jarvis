@@ -84,7 +84,7 @@ class FakeMediator:
     def component_status(self):
         return {"ok": True, "detail": "fake"}
 
-    async def turn(self, text, tools, on_delta, on_tool, cancel):
+    async def turn(self, text, tools, on_delta, on_tool, cancel, on_event=None):
         self.turns.append(text)
         t0 = time.monotonic()
         while time.monotonic() - t0 < self.delay:
@@ -416,7 +416,7 @@ async def test_mid_utterance_pause_keeps_single_turn_id():
 async def test_slow_tool_gets_instant_ack_once():
     p, bus = make()
 
-    async def turn(text, tools, on_delta, on_tool, cancel):
+    async def turn(text, tools, on_delta, on_tool, cancel, on_event=None):
         on_tool("delegate_task", {"goal": "x"}, "start")
         on_tool("delegate_task", {"goal": "x"}, "end")
         on_tool("memory_recall", {"query": "x"}, "start")

@@ -250,8 +250,34 @@ class Mediator:
                    tools: MetaToolHandler,
                    on_delta: Callable[[str], None],
                    on_tool: Callable[[str, dict, str], None],
-                   cancel: Optional[asyncio.Event] = None) -> dict[str, Any]:
-        """Run one conversation turn. Returns {text, ms_first_token, ms_total, tool_calls}."""
+                   cancel: Optional[asyncio.Event] = None,
+                   on_event: Optional[Callable[[str, dict], None]] = None) -> dict[str, Any]:
+        """Run one conversation turn.
+
+        Returns {text, ms_first_token, ms_total, tool_calls, outcome} where
+        ``outcome`` is one of:
+            "ok"           -- normal completion with a spoken reply
+            "aborted"      -- user barge-in / cancel mid-stream
+            "slow_stream"  -- mediator produced at least one delta during the turn
+                              (a prior ack / partial was already on the speaker)
+                              but the FINAL hop yielded nothing before the hop
+                              budget ran out. The "lost my train of thought"
+                              apology must NEVER fire for this case: the user
+                              already heard a real reply via the partial, and
+                              appending the apology would be both wrong (we
+                              actually got data, just late) and confusing
+                              (talking on top of what was already said).
+            "parse_error"  -- malformed tool line the retry couldn't fix
+                              (short apology, "Sorry, I got confused with a
+                              tool call. Could you rephrase?")
+            "empty_abort"  -- genuine empty completion: no deltas, no tool
+                              calls, no cancel. Existing fallback apology.
+
+        ``on_event`` (optional) receives ``(type_, payload)`` tuples for
+        structured events ("mediator.event" with payload = a dict). Currently
+        used to record slow-stream / parse-error / empty-abort outcomes into
+        turn_events so the three cases are distinguishable post-hoc.
+        """
         t0 = time.monotonic()
         first_token_ms: Optional[float] = None
         cancel = cancel or asyncio.Event()
@@ -265,11 +291,15 @@ class Mediator:
 
         try:
             return await self._turn_body(user_text, msgs, tools, on_delta, on_tool,
-                                         cancel, t0, first_token_ms)
+                                         cancel, t0, first_token_ms, on_event)
         except asyncio.CancelledError:
             # Barge-in: keep the partial answer in history so the user can say
             # "continue" and get the rest instead of a restart.
             self._record_interrupted(user_text, self._partial_spoken)
+            outcome_event = {"t": "mediator.event", "type": "aborted",
+                              "reason": "user_cancel"}
+            if on_event is not None:
+                on_event("aborted", outcome_event)
             raise
 
     async def _turn_body(self, user_text: str, msgs: list[dict],
@@ -277,7 +307,8 @@ class Mediator:
                          on_delta: Callable[[str], None],
                          on_tool: Callable[[str, dict, str], None],
                          cancel: asyncio.Event, t0: float,
-                         first_token_ms: Optional[float]) -> dict[str, Any]:
+                         first_token_ms: Optional[float],
+                         on_event: Optional[Callable[[str, dict], None]] = None) -> dict[str, Any]:
         spoken = ""
         tool_calls: list[dict] = []
         parse_retry_used = False
@@ -316,6 +347,10 @@ class Mediator:
                     if parse_retry_used:
                         spoken = "Sorry, I got confused with a tool call. Could you rephrase?"
                         on_delta(spoken)
+                        if on_event is not None:
+                            on_event("parse_error",
+                                     {"t": "mediator.event", "type": "parse_error",
+                                      "detail": "malformed tool line, retry exhausted"})
                         break
                     parse_retry_used = True
                     msgs.append({"role": "assistant", "content": stripped})
@@ -369,6 +404,19 @@ class Mediator:
             break
 
         spoken = spoken.strip()
+        # ---- three-way distinction ---------------------------------------
+        # The "Sorry, I lost my train of thought" apology was firing on
+        # legitimate slow-but-valid mediator streams (turn t670161197:
+        # ms_total=29168.7, two memory_recall hops succeeded, but the final
+        # post-tool hop yielded no deltas before the hop budget ran out).
+        # That made the assistant say "let me check" and then a few seconds
+        # later "sorry, I lost my train of thought" -- as if the first reply
+        # hadn't happened. The fix: only fire the apology when NOTHING came
+        # back (genuine empty abort). If at least one delta arrived during
+        # the turn -- even if the final hop was empty -- the user already
+        # heard real speech via the partial / ack path, and appending the
+        # apology would be wrong on top of being confusing.
+        outcome = "ok"
         if not spoken and not cancel.is_set():
             # Empty/failed completion. Retry once with an explicit nudge — an
             # identical retry tends to reproduce the identical failure.
@@ -385,9 +433,37 @@ class Mediator:
                     on_delta(spoken)
             except Exception:
                 pass
+        # After the one-shot retry, decide which of three cases we are in:
+        #   (a) slow-but-valid: any prior hop produced a delta (or a tool
+        #       call succeeded) but the final hop yielded nothing. NEVER
+        #       apologize: the partial / ack already went to the speaker.
+        #   (b) parse-error: handled inside the hop loop above; not reached.
+        #   (c) genuine empty abort: no deltas, no tools, no cancel. Keep
+        #       the existing fallback apology.
+        got_any_delta = (first_token_ms is not None) or bool(tool_calls)
         if not spoken and not cancel.is_set():
-            spoken = "Sorry, I lost my train of thought there. Could you say that again?"
-            on_delta(spoken)
+            if got_any_delta:
+                # (a) slow-but-valid: do NOT apologize. The pipeline should
+                # not emit anything more on top of what was already spoken.
+                outcome = "slow_stream"
+                if on_event is not None:
+                    on_event("slow_stream",
+                             {"t": "mediator.event", "type": "slow_stream",
+                              "detail": "final hop yielded no deltas; "
+                                        "prior deltas / tools already reached the speaker",
+                              "tool_calls": len(tool_calls),
+                              "first_token_ms": round(first_token_ms or 0, 1)})
+            else:
+                # (c) genuine abort: keep the existing fallback so the
+                # user always hears something. Structured event so we can
+                # count and alert on this class in production.
+                spoken = "Sorry, I lost my train of thought there. Could you say that again?"
+                on_delta(spoken)
+                outcome = "empty_abort"
+                if on_event is not None:
+                    on_event("empty_abort",
+                             {"t": "mediator.event", "type": "empty_abort",
+                              "detail": "no deltas, no tools, no cancel across the turn"})
         if spoken:
             self.history.append({"role": "user", "content": user_text})
             self.history.append({"role": "assistant", "content": spoken})
@@ -396,7 +472,8 @@ class Mediator:
         return {"text": spoken,
                 "ms_first_token": round(first_token_ms or 0, 1),
                 "ms_total": round((time.monotonic() - t0) * 1000, 1),
-                "tool_calls": tool_calls}
+                "tool_calls": tool_calls,
+                "outcome": outcome}
 
     # ------------------------------------------------------------------
     async def _stream(self, msgs: list[dict], cancel: asyncio.Event, fmt=None):

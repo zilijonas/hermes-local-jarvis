@@ -490,13 +490,24 @@ class Pipeline:
             async def dispatch(name: str, args: dict) -> dict[str, Any]:
                 return await self._dispatch_meta_tool(name, args, user_text=text)
 
+            def on_event(kind: str, payload: dict) -> None:
+                # Mediator events carry no turn_id of their own. Tag with the
+                # current turn so the bus persists them into turn_events and
+                # the three outcome classes (slow_stream / parse_error /
+                # empty_abort) are queryable from the DB post-hoc.
+                if "turn_id" not in payload:
+                    payload = {**payload, "turn_id": turn_id}
+                self.bus.publish(payload)
+
             try:
                 # Hard cap: a wedged mediator/tool must never leave the assistant
                 # deaf-mute behind the turn lock.
                 result = await asyncio.wait_for(
                     self.mediator.turn(
                         text, tools=dispatch,
-                        on_delta=on_delta, on_tool=on_tool, cancel=self._tts_cancel),
+                        on_delta=on_delta, on_tool=on_tool,
+                        cancel=self._tts_cancel,
+                        on_event=on_event),
                     timeout=90.0)
             except asyncio.TimeoutError:
                 self._set_state("error", detail="turn timed out")
